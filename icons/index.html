@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#7F77DD" />
+  <meta name="description" content="ระบบแจ้งเตือนการทดสอบชิ้นงาน" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="TestNotify" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <title>ระบบแจ้งเตือนการทดสอบ</title>
+  <style>
+    :root {
+      --primary:#7F77DD; --primary-dark:#534AB7;
+      --bg:#f5f5f7; --surface:#ffffff; --surface2:#f1f0f5;
+      --text:#1a1a2e; --text2:#666680; --text3:#9999aa;
+      --border:rgba(0,0,0,0.1);
+      --danger:#E24B4A; --warn:#EF9F27; --ok:#639922;
+      --radius:12px; --radius-sm:8px;
+    }
+    @media (prefers-color-scheme:dark){
+      :root{--bg:#0f0f1a;--surface:#1a1a2e;--surface2:#252540;--text:#e8e8f0;--text2:#9999bb;--text3:#666688;--border:rgba(255,255,255,0.1);}
+    }
+    *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+    .app-header{background:var(--surface);border-bottom:0.5px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:50}
+    .app-logo{width:34px;height:34px;background:var(--primary);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    .app-title{font-size:15px;font-weight:600}
+    .app-subtitle{font-size:11px;color:var(--text2)}
+    .notif-btn{margin-left:auto;padding:6px 12px;border:0.5px solid var(--border);border-radius:20px;background:var(--surface);color:var(--text);font-size:12px;cursor:pointer;white-space:nowrap}
+    .notif-btn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+    .bottom-nav{position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:0.5px solid var(--border);display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:50}
+    .nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 4px;cursor:pointer;color:var(--text3);font-size:10px;border:none;background:none}
+    .nav-item.active{color:var(--primary)}
+    .nav-item svg{width:22px;height:22px}
+    .nav-badge{background:var(--danger);color:#fff;font-size:9px;border-radius:10px;padding:1px 5px;position:absolute;top:6px;right:calc(50% - 20px)}
+    .content{padding:16px 16px 90px;max-width:600px;margin:0 auto}
+    .page{display:none}.page.active{display:block}
+    .card{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:transform 0.1s}
+    .card:active{transform:scale(0.99)}
+    .card-static{cursor:default}.card-static:active{transform:none}
+    .stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+    .stat{background:var(--surface);border-radius:var(--radius-sm);padding:12px;text-align:center;border:0.5px solid var(--border)}
+    .stat-num{font-size:26px;font-weight:600}
+    .stat-lbl{font-size:11px;color:var(--text2);margin-top:2px}
+    .badge{display:inline-block;font-size:11px;padding:2px 9px;border-radius:20px;font-weight:500}
+    .badge-danger{background:#FCEBEB;color:#A32D2D}
+    .badge-warn{background:#FAEEDA;color:#854F0B}
+    .badge-ok{background:#EAF3DE;color:#3B6D11}
+    .badge-info{background:#E6F1FB;color:#185FA5}
+    @media(prefers-color-scheme:dark){
+      .badge-danger{background:#3d1515;color:#f09595}
+      .badge-warn{background:#3d2a05;color:#FAC775}
+      .badge-ok{background:#1a2e08;color:#97C459}
+      .badge-info{background:#0a1e36;color:#85B7EB}
+    }
+    .timeline-bar{height:5px;background:var(--surface2);border-radius:3px;margin:8px 0 4px;overflow:hidden}
+    .timeline-fill{height:100%;border-radius:3px}
+    .form-group{margin-bottom:14px}
+    .form-label{font-size:12px;color:var(--text2);margin-bottom:5px;display:block}
+    .form-control{width:100%;padding:10px 12px;border:0.5px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:14px;outline:none;transition:border-color 0.2s}
+    .form-control:focus{border-color:var(--primary)}
+    select.form-control{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23999' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .btn{padding:10px 18px;border-radius:var(--radius-sm);font-size:14px;font-weight:500;cursor:pointer;border:0.5px solid var(--border);background:var(--surface);color:var(--text);transition:all 0.15s}
+    .btn:active{transform:scale(0.98)}
+    .btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+    .btn-primary:hover{background:var(--primary-dark)}
+    .btn-danger{background:var(--danger);color:#fff;border-color:var(--danger)}
+    .btn-sm{padding:6px 12px;font-size:12px}
+    .btn-full{width:100%}
+    .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+    .search-row{display:flex;gap:8px;margin-bottom:10px}
+    .search-input{flex:1;padding:9px 14px;border:0.5px solid var(--border);border-radius:20px;background:var(--surface);color:var(--text);font-size:14px;outline:none}
+    .filter-select{padding:9px 28px 9px 12px;border:0.5px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:13px;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
+    .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;align-items:flex-end}
+    .modal-overlay.open{display:flex}
+    .modal-sheet{background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-height:92vh;overflow-y:auto;padding:20px 16px 48px;animation:slideUp 0.25s ease}
+    @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+    .modal-handle{width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 16px}
+    .check-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:0.5px solid var(--border);font-size:14px}
+    .check-item:last-child{border-bottom:none}
+    .check-item input[type=checkbox]{width:18px;height:18px;accent-color:var(--primary);cursor:pointer;flex-shrink:0}
+    .check-item label{cursor:pointer;flex:1}
+    .check-item.done label{text-decoration:line-through;color:var(--text3)}
+    .phone-frame{background:var(--surface2);border-radius:var(--radius);padding:14px;margin-bottom:14px}
+    .notif-card{background:var(--surface);border-radius:12px;padding:12px 14px;margin-bottom:8px;border-left:3px solid var(--primary)}
+    .notif-card.danger{border-left-color:var(--danger)}
+    .notif-card.warn{border-left-color:var(--warn)}
+    .notif-app{font-size:11px;color:var(--text3);font-weight:500}
+    .notif-time{font-size:11px;color:var(--text3);margin-left:auto}
+    .notif-title{font-size:13px;font-weight:600;margin-bottom:2px}
+    .notif-body{font-size:12px;color:var(--text2)}
+    .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:0.5px solid var(--border);font-size:14px}
+    .toggle-row:last-child{border-bottom:none}
+    .toggle{width:44px;height:26px;border-radius:13px;background:var(--border);position:relative;cursor:pointer;transition:background 0.2s;border:none;flex-shrink:0}
+    .toggle.on{background:var(--primary)}
+    .toggle::after{content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform 0.2s}
+    .toggle.on::after{transform:translateX(18px)}
+    .section-title{font-size:13px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin:20px 0 10px}
+    .section-title:first-child{margin-top:0}
+    .empty{text-align:center;padding:40px 20px;color:var(--text2)}
+    .empty-icon{font-size:40px;margin-bottom:12px}
+    .pill-nav{display:flex;background:var(--surface2);border-radius:20px;padding:3px;margin-bottom:12px}
+    .pill-btn{flex:1;padding:7px 4px;border-radius:17px;border:none;background:none;font-size:12px;color:var(--text2);cursor:pointer;white-space:nowrap}
+    .pill-btn.active{background:var(--surface);color:var(--text);font-weight:500}
+    .toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(20px);background:#1a1a2e;color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;opacity:0;transition:all 0.3s;z-index:300;white-space:nowrap;pointer-events:none}
+    .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+    .row-between{display:flex;align-items:center;justify-content:space-between}
+    .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .text-sm{font-size:12px;color:var(--text2)}
+    .mt4{margin-top:4px}.mt8{margin-top:8px}.mt12{margin-top:12px}
+    .fw5{font-weight:500}
+    .divider{height:0.5px;background:var(--border);margin:12px 0}
+
+    /* ── Timeline / Calendar ─────────────────────── */
+    .tl-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .tl-nav-btn{width:34px;height:34px;border-radius:50%;border:0.5px solid var(--border);background:var(--surface);color:var(--text);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1}
+    .tl-title{font-size:14px;font-weight:600}
+    .summary-bar{display:flex;gap:8px;margin-bottom:12px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
+    .summary-bar::-webkit-scrollbar{display:none}
+    .s-chip{flex-shrink:0;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:500;border:0.5px solid transparent;white-space:nowrap}
+    .s-chip-total{background:var(--surface2);color:var(--text2)}
+    .s-chip-danger{background:#FCEBEB;color:#A32D2D}
+    .s-chip-warn{background:#FAEEDA;color:#854F0B}
+    .s-chip-ok{background:#EAF3DE;color:#3B6D11}
+    @media(prefers-color-scheme:dark){
+      .s-chip-danger{background:#3d1515;color:#f09595}
+      .s-chip-warn{background:#3d2a05;color:#FAC775}
+      .s-chip-ok{background:#1a2e08;color:#97C459}
+    }
+
+    /* Week view */
+    .week-grid{display:grid;grid-template-columns:repeat(7,1fr);border:0.5px solid var(--border);border-radius:var(--radius);overflow:hidden}
+    .week-hdr{background:var(--surface2);padding:8px 3px;text-align:center;font-size:11px;color:var(--text2);border-right:0.5px solid var(--border)}
+    .week-hdr:last-child{border-right:none}
+    .week-hdr.today{color:var(--primary);font-weight:600}
+    .week-hdr .hdr-date{font-size:16px;font-weight:600;color:var(--text);margin-top:2px}
+    .week-hdr.today .hdr-date{color:var(--primary)}
+    .week-cell{min-height:80px;padding:4px 3px;border-right:0.5px solid var(--border);border-top:0.5px solid var(--border);vertical-align:top}
+    .week-cell:last-child{border-right:none}
+    .week-event{font-size:10px;border-radius:4px;padding:2px 4px;margin-bottom:2px;line-height:1.3;cursor:pointer;word-break:break-all}
+    .wev-danger{background:#FCEBEB;color:#A32D2D}
+    .wev-warn{background:#FAEEDA;color:#854F0B}
+    .wev-ok{background:#EAF3DE;color:#3B6D11}
+    .wev-past{background:var(--surface2);color:var(--text3)}
+    @media(prefers-color-scheme:dark){
+      .wev-danger{background:#3d1515;color:#f09595}
+      .wev-warn{background:#3d2a05;color:#FAC775}
+      .wev-ok{background:#1a2e08;color:#97C459}
+    }
+
+    /* Month view */
+    .month-labels{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:4px}
+    .month-lbl{text-align:center;font-size:11px;color:var(--text3);padding:4px 0}
+    .month-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+    .month-day{min-height:44px;border-radius:6px;background:var(--surface);border:0.5px solid var(--border);padding:3px;position:relative}
+    .month-day.dim{opacity:0.35}
+    .month-day.today-cell{border-color:var(--primary);border-width:1.5px}
+    .day-num{font-size:11px;font-weight:500;text-align:center;color:var(--text2);margin-bottom:2px}
+    .today-cell .day-num{color:var(--primary)}
+    .month-dot{width:6px;height:6px;border-radius:50%;margin:1px auto}
+    .md-danger{background:var(--danger)}
+    .md-warn{background:var(--warn)}
+    .md-ok{background:var(--ok)}
+    .md-past{background:var(--text3)}
+
+    /* Year view */
+    .year-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+    .year-month{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--radius-sm);padding:10px}
+    .year-month-name{font-size:12px;font-weight:600;margin-bottom:6px}
+    .year-month-name.cur{color:var(--primary)}
+    .year-ev{display:flex;align-items:center;gap:5px;padding:3px 0;border-bottom:0.5px solid var(--border);cursor:pointer}
+    .year-ev:last-child{border-bottom:none}
+    .year-ev-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+    .year-ev-label{font-size:10px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+    /* Modal tabs */
+    .m-tabs{display:flex;border-bottom:0.5px solid var(--border);margin-bottom:16px}
+    .m-tab{flex:1;padding:10px 4px;font-size:13px;text-align:center;cursor:pointer;border:none;background:none;color:var(--text2);border-bottom:2px solid transparent;margin-bottom:-1px}
+    .m-tab.active{color:var(--primary);border-bottom-color:var(--primary);font-weight:500}
+    .m-panel{display:none}.m-panel.active{display:block}
+
+    /* History */
+    .hist-item{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:0.5px solid var(--border)}
+    .hist-item:last-child{border-bottom:none}
+    .hist-dot{width:8px;height:8px;border-radius:50%;margin-top:4px;flex-shrink:0;background:var(--ok)}
+    .hist-date{font-size:12px;font-weight:500}
+    .hist-result{font-size:12px;color:var(--text2)}
+  </style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="app-logo">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2">
+      <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+      <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+      <circle cx="12" cy="16" r="2" fill="#fff" stroke="none"/>
+    </svg>
+  </div>
+  <div><div class="app-title">TestNotify</div><div class="app-subtitle">ระบบแจ้งเตือนการทดสอบ</div></div>
+  <button class="notif-btn" id="notif-btn" onclick="toggleNotification()">🔔 เปิดแจ้งเตือน</button>
+</header>
+
+<main class="content">
+
+  <!-- Dashboard -->
+  <div id="page-home" class="page active">
+    <div class="stats-grid">
+      <div class="stat"><div class="stat-num" id="s-total" style="color:var(--primary)">0</div><div class="stat-lbl">ชิ้นงานทั้งหมด</div></div>
+      <div class="stat"><div class="stat-num" id="s-overdue" style="color:var(--danger)">0</div><div class="stat-lbl">เกินกำหนด</div></div>
+      <div class="stat"><div class="stat-num" id="s-soon" style="color:var(--warn)">0</div><div class="stat-lbl">ใกล้กำหนด</div></div>
+    </div>
+    <div class="section-title">ต้องดำเนินการ</div>
+    <div id="alert-list"><div class="empty"><div class="empty-icon">✅</div><div>ชิ้นงานทุกรายการปกติดี</div></div></div>
+  </div>
+
+  <!-- Schedule -->
+  <div id="page-schedule" class="page">
+    <div class="pill-nav">
+      <button class="pill-btn active" onclick="setViewMode('list',this)">รายการ</button>
+      <button class="pill-btn" onclick="setViewMode('week',this)">สัปดาห์</button>
+      <button class="pill-btn" onclick="setViewMode('month',this)">เดือน</button>
+      <button class="pill-btn" onclick="setViewMode('year',this)">ปี</button>
+    </div>
+
+    <!-- List controls -->
+    <div id="list-controls" class="search-row">
+      <input class="search-input" type="text" placeholder="🔍 ค้นหาชิ้นงาน..." id="search-input" oninput="renderSchedule()">
+      <select class="filter-select" id="filter-sel" onchange="renderSchedule()">
+        <option value="">ทั้งหมด</option><option value="overdue">เกินกำหนด</option>
+        <option value="soon">ใกล้กำหนด</option><option value="ok">ปกติ</option>
+      </select>
+    </div>
+
+    <!-- Calendar nav -->
+    <div id="cal-nav" class="tl-nav" style="display:none">
+      <button class="tl-nav-btn" onclick="calPrev()">‹</button>
+      <span class="tl-title" id="cal-title"></span>
+      <button class="tl-nav-btn" onclick="calNext()">›</button>
+    </div>
+
+    <!-- Summary chips -->
+    <div id="summary-bar" class="summary-bar" style="display:none"></div>
+
+    <!-- View containers -->
+    <div id="schedule-list"></div>
+    <div id="view-week"  style="display:none"></div>
+    <div id="view-month" style="display:none"></div>
+    <div id="view-year"  style="display:none"></div>
+  </div>
+
+  <!-- Add Item -->
+  <div id="page-add" class="page">
+    <div class="card card-static">
+      <div class="section-title" style="margin-top:0">ข้อมูลชิ้นงาน</div>
+      <div class="grid2">
+        <div class="form-group"><label class="form-label">ชื่อชิ้นงาน *</label><input class="form-control" type="text" id="f-name" placeholder="เช่น แผ่น Aluminum A1"></div>
+        <div class="form-group"><label class="form-label">เลขที่ชิ้นงาน *</label><input class="form-control" type="text" id="f-id" placeholder="เช่น WP-001"></div>
+      </div>
+      <div class="grid2">
+        <div class="form-group"><label class="form-label">หัวข้อการทดสอบ</label>
+          <select class="form-control" id="f-test">
+            <option>วัดสีชิ้นงาน (Color Measurement)</option>
+            <option>ทดสอบความแข็ง (Hardness Test)</option>
+            <option>ตรวจสอบความหนา (Thickness Check)</option>
+            <option>ทดสอบแรงดึง (Tensile Test)</option>
+            <option>ตรวจสอบพื้นผิว (Surface Inspection)</option>
+            <option>อื่นๆ</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">ความถี่</label>
+          <select class="form-control" id="f-freq" onchange="toggleCustom()">
+            <option value="30">ทุก 1 เดือน</option>
+            <option value="90" selected>ทุก 3 เดือน</option>
+            <option value="180">ทุก 6 เดือน</option>
+            <option value="365">ทุก 1 ปี</option>
+            <option value="custom">กำหนดเอง</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group" id="custom-days-row" style="display:none">
+        <label class="form-label">จำนวนวัน</label>
+        <input class="form-control" type="number" id="f-custom-days" placeholder="ระบุจำนวนวัน" min="1">
+      </div>
+      <div class="grid2">
+        <div class="form-group"><label class="form-label">วันทดสอบล่าสุด *</label><input class="form-control" type="date" id="f-last"></div>
+        <div class="form-group"><label class="form-label">ผลลัพธ์ที่คาดหวัง</label><input class="form-control" type="text" id="f-expected" placeholder="เช่น ΔE &lt; 2.0"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Checklist (คั่นด้วย ,)</label>
+        <input class="form-control" type="text" id="f-checklist" placeholder="บันทึกผล, เปรียบเทียบ, ถ่ายรูป">
+      </div>
+      <div class="form-group"><label class="form-label">หมายเหตุ</label><input class="form-control" type="text" id="f-note" placeholder="หมายเหตุเพิ่มเติม"></div>
+      <button class="btn btn-primary btn-full" onclick="addItem()">เพิ่มชิ้นงาน</button>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div id="page-settings" class="page">
+    <div class="section-title">การแจ้งเตือนบนมือถือ</div>
+    <div class="phone-frame" id="phone-notifs-container"></div>
+    <div class="section-title">ตั้งค่าการแจ้งเตือน</div>
+    <div class="card card-static">
+      <div class="toggle-row"><span>แจ้งเตือนล่วงหน้า 7 วัน</span><button class="toggle on" id="t7" onclick="this.classList.toggle('on')"></button></div>
+      <div class="toggle-row"><span>แจ้งเตือนล่วงหน้า 3 วัน</span><button class="toggle on" id="t3" onclick="this.classList.toggle('on')"></button></div>
+      <div class="toggle-row"><span>แจ้งเตือนในวันทดสอบ</span><button class="toggle on" id="t0" onclick="this.classList.toggle('on')"></button></div>
+      <div class="toggle-row"><span>แจ้งเตือนเกินกำหนด (รายวัน)</span><button class="toggle" id="tover" onclick="this.classList.toggle('on')"></button></div>
+      <div class="divider"></div>
+      <div class="row-between" style="padding:8px 0">
+        <span style="font-size:14px">เวลาแจ้งเตือน</span>
+        <input class="form-control" type="time" id="notif-time" value="08:00" style="width:130px">
+      </div>
+    </div>
+    <div class="section-title">ส่งออกข้อมูล</div>
+    <div class="card card-static">
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="exportExcel()">📊 Export Excel</button>
+        <button class="btn" onclick="exportPDF()">📄 Export PDF</button>
+        <button class="btn" onclick="exportJSON()">💾 Backup JSON</button>
+      </div>
+      <div class="text-sm mt8">ดาวน์โหลดรายงานสรุปชิ้นงานและกำหนดการทดสอบ</div>
+    </div>
+    <div class="section-title">ข้อมูล</div>
+    <div class="card card-static">
+      <div class="toggle-row"><span style="font-size:13px">เวอร์ชั่น</span><span style="font-size:13px;color:var(--text2)">1.1.0</span></div>
+      <div class="toggle-row"><span style="font-size:13px">จัดเก็บข้อมูล</span><span style="font-size:13px;color:var(--text2)">IndexedDB (ในเครื่อง)</span></div>
+      <div style="margin-top:12px"><button class="btn btn-danger" style="font-size:13px" onclick="clearAllData()">🗑 ลบข้อมูลทั้งหมด</button></div>
+    </div>
+  </div>
+
+</main>
+
+<nav class="bottom-nav">
+  <button class="nav-item active" id="nav-home" onclick="switchPage('home',this)" style="position:relative">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/></svg>
+    ภาพรวม<span class="nav-badge" id="badge-count" style="display:none">0</span>
+  </button>
+  <button class="nav-item" id="nav-schedule" onclick="switchPage('schedule',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+    ตาราง
+  </button>
+  <button class="nav-item" id="nav-add" onclick="switchPage('add',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+    เพิ่ม
+  </button>
+  <button class="nav-item" id="nav-settings" onclick="switchPage('settings',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    ตั้งค่า
+  </button>
+</nav>
+
+<div class="modal-overlay" id="detail-modal" onclick="handleModalClick(event)">
+  <div class="modal-sheet" id="modal-content-wrap">
+    <div class="modal-handle"></div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
