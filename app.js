@@ -1,7 +1,6 @@
 /* ============================================================
-   TestNotify PWA v1.2 — app.js
-   New: test topic manager · end-date progress · multi-freq
-        monthly-day schedule · mid-plan adjustment
+   TestNotify PWA v1.3 — app.js
+   New: month-from-start labels · hourly notifications · cute icon
    ============================================================ */
 
 // ── DB ────────────────────────────────────────────────────────
@@ -122,11 +121,11 @@ function showToast(msg) {
 function specLabel(spec) {
   if (!spec) return '-';
   if (spec.type === 'days') {
-    if (spec.value === 30)  return 'ทุก 1 เดือน';
-    if (spec.value === 90)  return 'ทุก 3 เดือน';
-    if (spec.value === 180) return 'ทุก 6 เดือน';
-    if (spec.value === 365) return 'ทุก 1 ปี';
-    return `ทุก ${spec.value} วัน`;
+    if (spec.value === 30)  return 'ครบเดือนที่ 1';
+    if (spec.value === 90)  return 'ครบเดือนที่ 3';
+    if (spec.value === 180) return 'ครบเดือนที่ 6';
+    if (spec.value === 365) return 'ครบ 1 ปี';
+    return `ครบ ${spec.value} วัน`;
   }
   if (spec.type === 'monthly-day') return `ทุกวันที่ ${spec.value} ของเดือน`;
   return '-';
@@ -859,33 +858,110 @@ async function saveEdit(id) {
 }
 
 // ── Notifications ─────────────────────────────────────────────
+let _hourlyTimer = null;   // setInterval handle
+let _notifSettings = {
+  on7day: true, on3day: true, onDay: true, onOverdue: false, onHourly: false,
+  hourlyIntervalHr: 1, notifTime: '08:00'
+};
+
+async function loadNotifSettings() {
+  const s = await dbGet('settings','notifSettings');
+  if (s) _notifSettings = { ..._notifSettings, ...s.value };
+  applyNotifSettingsUI();
+}
+async function saveNotifSettings() {
+  _notifSettings.on7day    = document.getElementById('t7')?.classList.contains('on');
+  _notifSettings.on3day    = document.getElementById('t3')?.classList.contains('on');
+  _notifSettings.onDay     = document.getElementById('t0')?.classList.contains('on');
+  _notifSettings.onOverdue = document.getElementById('tover')?.classList.contains('on');
+  _notifSettings.onHourly  = document.getElementById('thourly')?.classList.contains('on');
+  _notifSettings.hourlyIntervalHr = parseFloat(document.getElementById('hourly-interval')?.value)||1;
+  _notifSettings.notifTime = document.getElementById('notif-time')?.value||'08:00';
+  await dbPut('settings',{key:'notifSettings', value:_notifSettings});
+  restartHourlyTimer();
+  showToast('✅ บันทึกการตั้งค่าแล้ว');
+}
+function applyNotifSettingsUI() {
+  const set = (id, val) => { const el=document.getElementById(id); if(el) { el.classList.toggle('on', !!val); } };
+  set('t7',    _notifSettings.on7day);
+  set('t3',    _notifSettings.on3day);
+  set('t0',    _notifSettings.onDay);
+  set('tover', _notifSettings.onOverdue);
+  set('thourly',_notifSettings.onHourly);
+  const hi = document.getElementById('hourly-interval');
+  if (hi) hi.value = _notifSettings.hourlyIntervalHr;
+  const nt = document.getElementById('notif-time');
+  if (nt) nt.value = _notifSettings.notifTime;
+  const hw = document.getElementById('hourly-wrap');
+  if (hw) hw.style.display = _notifSettings.onHourly ? 'block' : 'none';
+}
+
 async function toggleNotification() {
-  if (!('Notification' in window)) { showToast('เบราว์เซอร์ไม่รองรับ'); return; }
+  if (!('Notification' in window)) { showToast('เบราว์เซอร์ไม่รองรับ Notification'); return; }
   if (Notification.permission==='granted') { showToast('การแจ้งเตือนเปิดอยู่แล้ว ✓'); return; }
   const p = await Notification.requestPermission();
   const btn = document.getElementById('notif-btn');
   if (p==='granted') {
     btn.textContent='🔔 แจ้งเตือนเปิดอยู่'; btn.classList.add('on');
     showToast('✅ เปิดการแจ้งเตือนสำเร็จ');
-    scheduleNotifications();
+    fireNotifications();
+    restartHourlyTimer();
   } else showToast('❌ ไม่ได้รับอนุญาต');
 }
+
 function checkNotifStatus() {
   if ('Notification' in window && Notification.permission==='granted') {
     document.getElementById('notif-btn').textContent='🔔 แจ้งเตือนเปิดอยู่';
     document.getElementById('notif-btn').classList.add('on');
   }
 }
-function scheduleNotifications() {
+
+// Fire notifications based on settings
+function fireNotifications(hourlyMode=false) {
   if (!('Notification' in window)||Notification.permission!=='granted') return;
-  items.filter(i=>getDays(i)<=7).forEach(item=>{
-    const d=getDays(item);
-    const msg=d<0?`เกินกำหนด ${Math.abs(d)} วัน`:d===0?'ถึงกำหนดวันนี้!':`อีก ${d} วัน`;
-    new Notification(`TestNotify — ${item.id}`,{
-      body:`${item.name}\n${item.test} · ${msg}`,
-      icon:'icons/icon-192.png', tag:item.id
+  const cfg = _notifSettings;
+  const alerts = items.filter(i=>{
+    const d = getDays(i);
+    if (d < 0  && cfg.onOverdue) return true;
+    if (d === 0 && cfg.onDay)    return true;
+    if (d <= 3  && cfg.on3day)   return true;
+    if (d <= 7  && cfg.on7day)   return true;
+    return false;
+  });
+  if (!alerts.length) {
+    if (hourlyMode) new Notification('TestNotify ✅', { body:'ชิ้นงานทุกรายการปกติดี', icon:'icons/icon-192.png', tag:'hourly-ok' });
+    return;
+  }
+  alerts.forEach(item=>{
+    const d = getDays(item);
+    const msg = d<0?`⚠️ เกินกำหนด ${Math.abs(d)} วัน`:d===0?'🔴 ถึงกำหนดวันนี้!':d<=3?`🟡 อีก ${d} วัน`:`🟢 อีก ${d} วัน`;
+    new Notification(`TestNotify — ${item.id}`, {
+      body:`${item.name}\n${item.test}\n${msg}`,
+      icon:'icons/icon-192.png',
+      tag: hourlyMode ? `hr-${item.id}` : item.id,
+      requireInteraction: d <= 0
     });
   });
+}
+
+// Legacy alias
+function scheduleNotifications() { fireNotifications(false); }
+
+// Hourly (or custom interval) repeating timer
+function restartHourlyTimer() {
+  if (_hourlyTimer) { clearInterval(_hourlyTimer); _hourlyTimer = null; }
+  if (!_notifSettings.onHourly) return;
+  if (!('Notification' in window)||Notification.permission!=='granted') return;
+  const ms = (_notifSettings.hourlyIntervalHr||1) * 60 * 60 * 1000;
+  _hourlyTimer = setInterval(()=>{
+    fireNotifications(true);
+  }, ms);
+}
+
+function toggleHourlyWrap() {
+  const on = document.getElementById('thourly')?.classList.contains('on');
+  const hw = document.getElementById('hourly-wrap');
+  if (hw) hw.style.display = on ? 'block' : 'none';
 }
 
 // ── Export ────────────────────────────────────────────────────
@@ -962,6 +1038,7 @@ document.getElementById('f-last').value = new Date().toISOString().split('T')[0]
 
 openDB()
   .then(()=>loadTopics())
+  .then(()=>loadNotifSettings())
   .then(()=>seedIfEmpty())
   .then(()=>loadItems())
   .then(()=>{
@@ -969,6 +1046,10 @@ openDB()
     renderTopicList('topic-list-inline','new-topic-inline','addTopicInline');
     renderAll();
     checkNotifStatus();
-    if ('Notification' in window && Notification.permission==='granted') scheduleNotifications();
+    applyNotifSettingsUI();
+    if ('Notification' in window && Notification.permission==='granted') {
+      fireNotifications(false);
+      restartHourlyTimer();
+    }
   })
   .catch(err=>console.error('DB Error:',err));

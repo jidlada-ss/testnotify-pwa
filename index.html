@@ -8,7 +8,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
   <meta name="apple-mobile-web-app-title" content="TestNotify"/>
   <link rel="manifest" href="manifest.json"/>
-  <link rel="apple-touch-icon" href="icons/icon-192.png"/>
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png"/>
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png"/>
   <title>ระบบแจ้งเตือนการทดสอบ</title>
   <style>
     :root{
@@ -289,10 +290,10 @@
       <div class="fg">
         <label class="fl">ความถี่การทดสอบ (เลือกได้หลายรายการ)</label>
         <div class="freq-chips" id="f-freq-chips">
-          <div class="fchip" data-v="30" onclick="toggleFreqChip(this)">1 เดือน</div>
-          <div class="fchip sel" data-v="90" onclick="toggleFreqChip(this)">3 เดือน</div>
-          <div class="fchip" data-v="180" onclick="toggleFreqChip(this)">6 เดือน</div>
-          <div class="fchip" data-v="365" onclick="toggleFreqChip(this)">1 ปี</div>
+          <div class="fchip" data-v="30" onclick="toggleFreqChip(this)">ครบเดือนที่ 1</div>
+          <div class="fchip sel" data-v="90" onclick="toggleFreqChip(this)">ครบเดือนที่ 3</div>
+          <div class="fchip" data-v="180" onclick="toggleFreqChip(this)">ครบเดือนที่ 6</div>
+          <div class="fchip" data-v="365" onclick="toggleFreqChip(this)">ครบ 1 ปี</div>
           <div class="fchip" data-v="custom-days" onclick="toggleFreqChip(this)">กำหนดวัน</div>
           <div class="fchip" data-v="monthly-day" onclick="toggleFreqChip(this)">ทุกวันที่...</div>
         </div>
@@ -326,12 +327,33 @@
       <div class="tr"><span>แจ้งเตือนล่วงหน้า 7 วัน</span><button class="tg on" id="t7" onclick="this.classList.toggle('on')"></button></div>
       <div class="tr"><span>แจ้งเตือนล่วงหน้า 3 วัน</span><button class="tg on" id="t3" onclick="this.classList.toggle('on')"></button></div>
       <div class="tr"><span>แจ้งเตือนในวันทดสอบ</span><button class="tg on" id="t0" onclick="this.classList.toggle('on')"></button></div>
-      <div class="tr"><span>แจ้งเตือนเกินกำหนด</span><button class="tg" id="tover" onclick="this.classList.toggle('on')"></button></div>
+      <div class="tr"><span>แจ้งเตือนเกินกำหนด (รายวัน)</span><button class="tg" id="tover" onclick="this.classList.toggle('on')"></button></div>
+      <div class="tr">
+        <div>
+          <div style="font-size:14px">แจ้งเตือนซ้ำทุกชั่วโมง</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px">สำหรับงานที่ต้องติดตามใกล้ชิด</div>
+        </div>
+        <button class="tg" id="thourly" onclick="this.classList.toggle('on');toggleHourlyWrap()"></button>
+      </div>
+      <div id="hourly-wrap" style="display:none;padding:10px 0 2px">
+        <div class="rb" style="margin-bottom:6px">
+          <span style="font-size:13px;color:var(--text2)">ความถี่ (ชั่วโมง)</span>
+          <select class="fc" id="hourly-interval" style="width:160px">
+            <option value="0.5">ทุก 30 นาที</option>
+            <option value="1" selected>ทุก 1 ชั่วโมง</option>
+            <option value="2">ทุก 2 ชั่วโมง</option>
+            <option value="4">ทุก 4 ชั่วโมง</option>
+            <option value="8">ทุก 8 ชั่วโมง</option>
+          </select>
+        </div>
+        <div style="font-size:11px;color:var(--text3);padding:4px 0">⚠️ ใช้พลังงานแบตเตอรี่มากขึ้น แนะนำสำหรับวันทดสอบเท่านั้น</div>
+      </div>
       <div class="div"></div>
-      <div class="rb" style="padding:8px 0">
-        <span style="font-size:14px">เวลาแจ้งเตือน</span>
+      <div class="rb" style="padding:6px 0 10px">
+        <span style="font-size:14px">เวลาแจ้งเตือนปกติ</span>
         <input class="fc" type="time" id="notif-time" value="08:00" style="width:130px">
       </div>
+      <button class="btn btn-p btn-full" onclick="saveNotifSettings()">💾 บันทึกการตั้งค่า</button>
     </div>
     <div class="sec">ส่งออกข้อมูล</div>
     <div class="card card-s">
