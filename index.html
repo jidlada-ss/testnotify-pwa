@@ -277,8 +277,9 @@
       <div class="sec" style="margin-top:0">ข้อมูลชิ้นงาน</div>
       <div class="g2">
         <div class="fg"><label class="fl">ชื่อชิ้นงาน *</label><input class="fc" type="text" id="f-name" placeholder="เช่น แผ่น Aluminum A1"></div>
-        <div class="fg"><label class="fl">เลขที่ชิ้นงาน *</label><input class="fc" type="text" id="f-id" placeholder="เช่น WP-001"></div>
+        <div class="fg"><label class="fl">เลขที่ชิ้นงาน</label><input class="fc" type="text" id="f-id" placeholder="เช่น WP-001 (ไม่บังคับ)"></div>
       </div>
+      <div class="fg"><label class="fl">รายละเอียดชิ้นงาน</label><input class="fc" type="text" id="f-desc" placeholder="เช่น แผ่นอลูมิเนียมชุบสี ขนาด 100×200 mm หนา 2 mm"></div>
       <div class="fg"><label class="fl">หัวข้อการทดสอบ</label>
         <div style="display:flex;gap:6px">
           <select class="fc" id="f-test" style="flex:1"></select>
@@ -290,9 +291,9 @@
       <div class="fg">
         <label class="fl">ความถี่การทดสอบ (เลือกได้หลายรายการ)</label>
         <div class="freq-chips" id="f-freq-chips">
-          <div class="fchip" data-v="30" onclick="toggleFreqChip(this)">ครบเดือนที่ 1</div>
-          <div class="fchip sel" data-v="90" onclick="toggleFreqChip(this)">ครบเดือนที่ 3</div>
-          <div class="fchip" data-v="180" onclick="toggleFreqChip(this)">ครบเดือนที่ 6</div>
+          <div class="fchip" data-v="30" onclick="toggleFreqChip(this)">ครบ 1 เดือน</div>
+          <div class="fchip sel" data-v="90" onclick="toggleFreqChip(this)">ครบ 3 เดือน</div>
+          <div class="fchip" data-v="180" onclick="toggleFreqChip(this)">ครบ 6 เดือน</div>
           <div class="fchip" data-v="365" onclick="toggleFreqChip(this)">ครบ 1 ปี</div>
           <div class="fchip" data-v="custom-days" onclick="toggleFreqChip(this)">กำหนดวัน</div>
           <div class="fchip" data-v="monthly-day" onclick="toggleFreqChip(this)">ทุกวันที่...</div>
@@ -317,7 +318,6 @@
       <button class="btn btn-p btn-full" onclick="addItem()">เพิ่มชิ้นงาน</button>
     </div>
   </div>
-
   <!-- Settings -->
   <div id="page-settings" class="pg">
     <div class="sec">การแจ้งเตือนบนมือถือ</div>

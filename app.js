@@ -44,7 +44,58 @@ function fmtDate(d) {
   return `${dt.getDate()} ${TH_M[dt.getMonth()]} ${dt.getFullYear()}`;
 }
 
-// ── Frequency helpers ─────────────────────────────────────────
+// ── Thai Public Holidays (วันหยุดนักขัตฤกษ์) ─────────────────
+// Format: 'MM-DD' (ปีใดก็ได้) หรือ 'YYYY-MM-DD' (ปีเฉพาะ)
+const THAI_HOLIDAYS_FIXED = [
+  '01-01', // วันขึ้นปีใหม่
+  '04-06', // วันจักรี
+  '04-13', // วันสงกรานต์
+  '04-14', // วันสงกรานต์
+  '04-15', // วันสงกรานต์
+  '05-01', // วันแรงงาน
+  '05-05', // วันฉัตรมงคล
+  '06-03', // วันเฉลิมพระชนมพรรษา พระราชินี
+  '07-28', // วันเฉลิมพระชนมพรรษา ร.10
+  '08-12', // วันแม่แห่งชาติ
+  '10-13', // วันคล้ายวันสวรรคต ร.9
+  '10-23', // วันปิยมหาราช
+  '12-05', // วันพ่อแห่งชาติ
+  '12-10', // วันรัฐธรรมนูญ
+  '12-31', // วันสิ้นปี
+];
+// วันหยุดที่เปลี่ยนทุกปี (lunar-based) — ใส่เพิ่มได้
+const THAI_HOLIDAYS_SPECIFIC = [
+  '2025-05-12','2025-06-02', // วันวิสาขบูชา 2568, วันเฉลิม
+  '2026-05-01','2026-05-06',
+];
+
+function isHoliday(date) {
+  const d = new Date(date);
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  const iso = isoDate(d);
+  if (THAI_HOLIDAYS_FIXED.includes(`${mm}-${dd}`)) return true;
+  if (THAI_HOLIDAYS_SPECIFIC.includes(iso)) return true;
+  return false;
+}
+
+function isWeekend(date) {
+  const day = new Date(date).getDay();
+  return day === 0 || day === 6; // 0=Sun, 6=Sat
+}
+
+// เลื่อนวันที่ทดสอบไปวันทำการถัดไปถ้าตรงกับเสาร์/อาทิตย์/หยุดนักขัตฤกษ์
+function skipToWorkday(date) {
+  let d = new Date(date);
+  let tries = 0;
+  while ((isWeekend(d) || isHoliday(d)) && tries < 14) {
+    d = addDays(d, 1);
+    tries++;
+  }
+  return d;
+}
+
+
 // item.freqs = array of freq specs:
 //   { type:'days', value:90 }
 //   { type:'monthly-day', value:15 }   ← every 15th of month
@@ -68,7 +119,8 @@ function getNextFromSpec(fromDate, spec) {
 // Get the single "current next" date for an item (using active schedule)
 function getNext(item) {
   const spec = getActiveSpec(item);
-  return getNextFromSpec(new Date(item.last), spec);
+  const raw  = getNextFromSpec(new Date(item.last), spec);
+  return skipToWorkday(raw);   // เลื่อนถ้าตรงวันหยุด/เสาร์-อาทิตย์
 }
 
 function getActiveSpec(item) {
@@ -121,9 +173,9 @@ function showToast(msg) {
 function specLabel(spec) {
   if (!spec) return '-';
   if (spec.type === 'days') {
-    if (spec.value === 30)  return 'ครบเดือนที่ 1';
-    if (spec.value === 90)  return 'ครบเดือนที่ 3';
-    if (spec.value === 180) return 'ครบเดือนที่ 6';
+    if (spec.value === 30)  return 'ครบ 1 เดือน';
+    if (spec.value === 90)  return 'ครบ 3 เดือน';
+    if (spec.value === 180) return 'ครบ 6 เดือน';
     if (spec.value === 365) return 'ครบ 1 ปี';
     return `ครบ ${spec.value} วัน`;
   }
@@ -350,7 +402,8 @@ function renderSchedule() {
 
     return `<div class="card" onclick="openModal('${item.id}')">
       <div class="row rb"><span class="fw5" style="font-size:14px">${item.name}</span><div class="row">${adjBadge}${getBadge(item)}</div></div>
-      <div class="tsm mt4">${item.id} · ${item.test}</div>
+      <div class="tsm mt4">${item.id ? item.id+' · ' : ''}${item.test}</div>
+      ${item.desc ? `<div class="tsm mt4" style="color:var(--text3)">${item.desc}</div>` : ''}
       <div class="tsm mt4" style="color:var(--text3)">ความถี่: ${freqLine}</div>
       <div class="pb"><div class="pf" style="width:${pct}%;background:${col}"></div></div>
       <div class="row rb tsm"><span>ล่าสุด: ${fmtDate(item.last)}</span><span>ถัดไป: ${fmtDate(getNext(item))}</span></div>
@@ -518,7 +571,8 @@ function switchPage(name, btn) {
 // ── Add Item ──────────────────────────────────────────────────
 async function addItem() {
   const name    = document.getElementById('f-name').value.trim();
-  const id      = document.getElementById('f-id').value.trim();
+  let   id      = document.getElementById('f-id').value.trim();
+  const desc    = document.getElementById('f-desc').value.trim();
   const test    = document.getElementById('f-test').value;
   const freqs   = collectFreqsFromForm();
   const last    = document.getElementById('f-last').value;
@@ -527,16 +581,18 @@ async function addItem() {
   const note    = document.getElementById('f-note').value.trim();
   const ckRaw   = document.getElementById('f-checklist').value;
   const cl      = ckRaw ? ckRaw.split(',').map(s=>s.trim()).filter(Boolean) : ['บันทึกผล','เปรียบเทียบ','อัปเดตเอกสาร'];
-  if (!name||!id||!last) { showToast('⚠️ กรอกชื่อ เลขที่ และวันเริ่มต้น'); return; }
-  if (!freqs.length)     { showToast('⚠️ เลือกความถี่อย่างน้อย 1 รายการ'); return; }
-  if (await dbGet('items',id)) { showToast('⚠️ เลขที่นี้มีอยู่แล้ว'); return; }
+  if (!name||!last) { showToast('⚠️ กรอกชื่อชิ้นงานและวันเริ่มต้น'); return; }
+  if (!freqs.length) { showToast('⚠️ เลือกความถี่อย่างน้อย 1 รายการ'); return; }
+  // Auto-generate ID if blank
+  if (!id) id = 'WP-' + Date.now().toString().slice(-6);
+  if (await dbGet('items',id)) { showToast('⚠️ เลขที่นี้มีอยู่แล้ว กรุณาใช้เลขที่อื่น'); return; }
   await saveItem({
-    id, name, test, freqs, freq:freqs[0].value||90,
+    id, name, desc, test, freqs, freq:freqs[0].value||90,
     last:new Date(last).toISOString(),
     endDate: endDate ? new Date(endDate).toISOString() : null,
     expected:exp||'-', note, checklist:cl, checkDone:[], lastResult:'', history:[], planAdj:null
   });
-  ['f-name','f-id','f-expected','f-note','f-checklist'].forEach(f=>document.getElementById(f).value='');
+  ['f-name','f-id','f-desc','f-expected','f-note','f-checklist'].forEach(f=>{ const el=document.getElementById(f); if(el) el.value=''; });
   document.getElementById('f-enddate').value = '';
   showToast('✅ เพิ่มชิ้นงานเรียบร้อย');
   switchPage('schedule', document.getElementById('nav-schedule'));
@@ -569,7 +625,7 @@ async function openModal(id) {
     : '<div class="tsm" style="padding:8px 0;text-align:center">ยังไม่มีประวัติ</div>';
 
   // Edit form
-  const freqOpts = [{v:30,l:'1 เดือน'},{v:90,l:'3 เดือน'},{v:180,l:'6 เดือน'},{v:365,l:'1 ปี'}];
+  const freqOpts = [{v:30,l:'ครบ 1 เดือน'},{v:90,l:'ครบ 3 เดือน'},{v:180,l:'ครบ 6 เดือน'},{v:365,l:'ครบ 1 ปี'}];
   const editFreqChips = freqOpts.map(o=>{
     const sel = (item.freqs||[]).some(f=>f.type==='days'&&f.value===o.v);
     return`<div class="fchip${sel?' sel':''}" data-v="${o.v}" onclick="this.classList.toggle('sel')">${o.l}</div>`;
@@ -603,10 +659,11 @@ async function openModal(id) {
   const testSelHtml = testTopics.map(t=>`<option${item.test===t?' selected':''}>${t}</option>`).join('');
 
   document.getElementById('modal-body').innerHTML = `
-    <div class="row rb" style="margin-bottom:12px">
+    <div class="row rb" style="margin-bottom:4px">
       <div><div style="font-size:16px;font-weight:600">${item.name}</div><div class="tsm">${item.id}</div></div>
       ${getBadge(item)}
     </div>
+    ${item.desc ? `<div class="tsm" style="margin-bottom:10px;color:var(--text2)">${item.desc}</div>` : ''}
     ${epBlock}
     <div class="mtabs">
       <button class="mttab active" onclick="swTab(0,this)">รายละเอียด</button>
@@ -622,7 +679,11 @@ async function openModal(id) {
           <div><div class="tsm">หัวข้อทดสอบ</div><div style="font-size:13px;font-weight:500;margin-top:2px">${item.test}</div></div>
           <div><div class="tsm">ผลลัพธ์ที่คาดหวัง</div><div style="font-size:13px;font-weight:500;margin-top:2px">${item.expected}</div></div>
           <div><div class="tsm">ความถี่</div><div style="font-size:13px;font-weight:500;margin-top:2px">${freqsLabel(item)}</div></div>
-          <div><div class="tsm">กำหนดถัดไป</div><div style="font-size:13px;font-weight:500;margin-top:2px">${fmtDate(getNext(item))}</div></div>
+          <div>
+            <div class="tsm">กำหนดถัดไป</div>
+            <div style="font-size:13px;font-weight:500;margin-top:2px">${fmtDate(getNext(item))}</div>
+            ${(()=>{ const raw=getNextFromSpec(new Date(item.last),getActiveSpec(item)); const skipped=skipToWorkday(raw); return diffDays(skipped,raw)>0?`<div style="font-size:10px;color:var(--warn);margin-top:1px">⟳ เลื่อนจากวันหยุด (${fmtDate(raw)})</div>`:'' })()}
+          </div>
           <div><div class="tsm">ทดสอบล่าสุด</div><div style="font-size:13px;font-weight:500;margin-top:2px">${fmtDate(item.last)}</div></div>
           ${item.endDate?`<div><div class="tsm">สิ้นสุดโครงการ</div><div style="font-size:13px;font-weight:500;margin-top:2px">${fmtDate(item.endDate)}</div></div>`:''}
           ${item.note?`<div><div class="tsm">หมายเหตุ</div><div style="font-size:13px;font-weight:500;margin-top:2px">${item.note}</div></div>`:''}
@@ -646,6 +707,7 @@ async function openModal(id) {
     <!-- Tab 1: Edit -->
     <div class="mpanel" id="mp-1">
       <div class="fg"><label class="fl">ชื่อชิ้นงาน *</label><input class="fc" type="text" id="e-name" value="${item.name}"></div>
+      <div class="fg"><label class="fl">รายละเอียดชิ้นงาน</label><input class="fc" type="text" id="e-desc" value="${item.desc||''}" placeholder="รายละเอียดเพิ่มเติม"></div>
       <div class="fg"><label class="fl">หัวข้อการทดสอบ</label><select class="fc" id="e-test">${testSelHtml}</select></div>
       <div class="fg">
         <label class="fl">ความถี่ (เลือกได้หลายรายการ)</label>
@@ -678,10 +740,10 @@ async function openModal(id) {
       </div>
       <div class="fg"><label class="fl">ความถี่ใหม่</label>
         <select class="fc" id="adj-freq-type" onchange="updateAdjPreview()">
-          <option value="30">ทุก 1 เดือน (30 วัน)</option>
-          <option value="90">ทุก 3 เดือน (90 วัน)</option>
-          <option value="180">ทุก 6 เดือน (180 วัน)</option>
-          <option value="365">ทุก 1 ปี (365 วัน)</option>
+          <option value="30">ครบ 1 เดือน (30 วัน)</option>
+          <option value="90">ครบ 3 เดือน (90 วัน)</option>
+          <option value="180">ครบ 6 เดือน (180 วัน)</option>
+          <option value="365">ครบ 1 ปี (365 วัน)</option>
           <option value="custom-days">กำหนดเอง (วัน)</option>
           <option value="monthly-day">ทุกวันที่ ... ของเดือน</option>
         </select>
@@ -821,6 +883,7 @@ async function deleteItem(id) {
 // ── Save Edit ─────────────────────────────────────────────────
 async function saveEdit(id) {
   const name    = document.getElementById('e-name').value.trim();
+  const desc    = document.getElementById('e-desc')?.value.trim()||'';
   const test    = document.getElementById('e-test').value;
   const last    = document.getElementById('e-last').value;
   const endDate = document.getElementById('e-enddate').value;
@@ -848,7 +911,7 @@ async function saveEdit(id) {
   if (!eFreqs.length) { showToast('⚠️ เลือกความถี่อย่างน้อย 1 รายการ'); return; }
   const item = await dbGet('items', id);
   Object.assign(item, {
-    name, test, freqs:eFreqs, last:new Date(last).toISOString(),
+    name, desc, test, freqs:eFreqs, last:new Date(last).toISOString(),
     endDate: endDate ? new Date(endDate).toISOString() : null,
     expected:exp||'-', note, checklist:cl
   });
