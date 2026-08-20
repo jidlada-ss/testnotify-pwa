@@ -1,6 +1,7 @@
 /* ============================================================
-   TestNotify PWA v1.3 — app.js
-   New: month-from-start labels · hourly notifications · cute icon
+   TestNotify PWA v1.5 — app.js
+   v1.5: startDate field · count-from-start scheduling
+         auto-prune completed freqs · stop at endDate
    ============================================================ */
 
 // ── DB ────────────────────────────────────────────────────────
@@ -100,67 +101,109 @@ function skipToWorkday(date) {
 //   { type:'days', value:90 }
 //   { type:'monthly-day', value:15 }   ← every 15th of month
 
+// ── Frequency helpers (v1.5: count from startDate) ────────────
+// item.freqs = sorted array of freq specs, e.g.
+//   [{ type:'days', value:30 }, { type:'days', value:90 }, { type:'days', value:180 }]
+// Each spec fires once (from startDate). After it passes it is pruned.
+// item.startDate = วันเริ่มต้นโครงการ (ใช้ item.last เป็น fallback)
+
+function getStartDate(item) {
+  return new Date(item.startDate || item.last);
+}
+
 function getNextFromSpec(fromDate, spec) {
   const d = new Date(fromDate);
-  if (spec.type === 'days') {
-    return addDays(d, spec.value);
-  }
+  if (spec.type === 'days') return addDays(d, spec.value);
   if (spec.type === 'monthly-day') {
-    // Next occurrence of day-of-month >= tomorrow
     const target = spec.value;
-    let next = new Date(d);
-    next.setDate(target);
+    let next = new Date(d); next.setDate(target);
     if (next <= d) next.setMonth(next.getMonth()+1, target);
     return next;
   }
   return addDays(d, 90);
 }
 
-// Get the single "current next" date for an item (using active schedule)
+// คำนวณวันถัดไปทั้งหมดจาก startDate (ยังไม่ผ่านไป)
+function getAllNextDates(item) {
+  const start = getStartDate(item);
+  const freqs  = item.freqs && item.freqs.length ? item.freqs : [{ type:'days', value: item.freq||90 }];
+  return freqs.map(spec => ({
+    spec,
+    raw:  getNextFromSpec(start, spec),
+    date: skipToWorkday(getNextFromSpec(start, spec)),
+  })).sort((a,b) => a.date - b.date);
+}
+
+// วันถัดไปที่ใกล้ที่สุด (ยังอยู่ในอนาคต หรือ overdue)
+function getNextEntry(item) {
+  const all = getAllNextDates(item);
+  // Return the earliest one (first in sorted list) — ยังไม่ prune ในหน่วยความจำ
+  return all[0] || null;
+}
+
 function getNext(item) {
-  const spec = getActiveSpec(item);
-  const raw  = getNextFromSpec(new Date(item.last), spec);
-  return skipToWorkday(raw);   // เลื่อนถ้าตรงวันหยุด/เสาร์-อาทิตย์
+  const e = getNextEntry(item);
+  return e ? e.date : addDays(today(), 999);
 }
 
 function getActiveSpec(item) {
-  // If there's a plan adjustment and we're within it, use that spec
-  if (item.planAdj) {
-    const adjFrom = new Date(item.planAdj.fromDate);
-    if (today() >= adjFrom) return item.planAdj.spec;
-  }
-  // Use first freq spec (primary)
-  if (item.freqs && item.freqs.length) return item.freqs[0];
-  // Fallback legacy
-  return { type:'days', value: item.freq||90 };
+  const e = getNextEntry(item);
+  return e ? e.spec : (item.freqs?.[0] || { type:'days', value:90 });
 }
 
-function getDays(item)   { return diffDays(getNext(item), today()); }
+// ตรวจว่าโครงการสิ้นสุดแล้วหรือยัง
+function isProjectDone(item) {
+  if (!item.endDate) return false;
+  return today() >= new Date(item.endDate);
+}
+
+function getDays(item) {
+  if (isProjectDone(item)) return 999; // stop showing as upcoming
+  return diffDays(getNext(item), today());
+}
+
 function getStatus(item) {
+  if (isProjectDone(item)) return 'done';
   const d = getDays(item);
   if (d < 0)  return 'overdue';
   if (d <= 7) return 'soon';
   return 'ok';
 }
+
 function getBadge(item) {
-  const d = getDays(item), s = getStatus(item);
-  if (s==='overdue') return `<span class="badge bd">เกิน ${Math.abs(d)} วัน</span>`;
-  if (s==='soon')    return `<span class="badge bw">อีก ${d} วัน</span>`;
+  const s = getStatus(item);
+  if (s === 'done')    return `<span class="badge bo">✅ 100% เสร็จสิ้น</span>`;
+  const d = getDays(item);
+  if (s === 'overdue') return `<span class="badge bd">เกิน ${Math.abs(d)} วัน</span>`;
+  if (s === 'soon')    return `<span class="badge bw">อีก ${d} วัน</span>`;
   return `<span class="badge bo">อีก ${d} วัน</span>`;
 }
 
-// End-date progress
+// Prune freqs ที่ผ่าน startDate + value ไปแล้ว (เรียกตอน completeTest)
+function prunePassedFreqs(item) {
+  if (!item.freqs || item.freqs.length <= 1) return item;
+  const start = getStartDate(item);
+  const remaining = item.freqs.filter(spec => {
+    const due = getNextFromSpec(start, spec);
+    return due > today(); // เก็บเฉพาะที่ยังไม่ถึง
+  });
+  item.freqs = remaining.length ? remaining : [item.freqs[item.freqs.length - 1]]; // เก็บอย่างน้อย 1
+  return item;
+}
+
+// End-date progress (นับจาก startDate)
 function getEndDateProgress(item) {
   if (!item.endDate) return null;
-  const start = new Date(item.last);
-  const end   = new Date(item.endDate);
-  const now   = today();
-  const total = diffDays(end, start);
-  const elapsed = diffDays(now, start);
+  const start   = getStartDate(item);
+  const end     = new Date(item.endDate);
+  const now     = today();
+  const total   = diffDays(end, start);
   if (total <= 0) return null;
-  const pct = Math.min(100, Math.max(0, Math.round(elapsed / total * 100)));
+  const elapsed   = diffDays(now, start);
+  const pct       = Math.min(100, Math.max(0, Math.round(elapsed / total * 100)));
   const remaining = diffDays(end, now);
-  return { pct, remaining, end, total, elapsed };
+  const isDone    = now >= end;
+  return { pct, remaining, end, total, elapsed, isDone };
 }
 
 function showToast(msg) {
@@ -185,7 +228,26 @@ function specLabel(spec) {
 
 function freqsLabel(item) {
   if (!item.freqs || !item.freqs.length) return specLabel({type:'days',value:item.freq||90});
-  return item.freqs.map(specLabel).join(', ');
+  return item.freqs.map(specLabel).join(' → ');
+}
+
+// แสดงกำหนดการทั้งหมดที่ยังเหลืออยู่ (นับจาก startDate)
+function freqsScheduleHtml(item) {
+  if (!item.freqs || !item.freqs.length) return '';
+  const start = getStartDate(item);
+  const lines = item.freqs.map(spec => {
+    const raw   = getNextFromSpec(start, spec);
+    const date  = skipToWorkday(raw);
+    const d     = diffDays(date, today());
+    const isPast = d < 0;
+    const cls   = isPast ? 'color:var(--text3);text-decoration:line-through' : d<=7 ? 'color:var(--warn);font-weight:500' : 'color:var(--text2)';
+    const tag   = isPast ? '✓ ผ่านแล้ว' : d===0 ? '🔴 วันนี้' : d<=7 ? `🟡 อีก ${d} วัน` : `🟢 อีก ${d} วัน`;
+    return `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:.5px solid var(--border);${cls}">
+      <span>${specLabel(spec)}</span>
+      <span>${fmtDate(date)} &nbsp;${tag}</span>
+    </div>`;
+  }).join('');
+  return `<div style="border:.5px solid var(--border);border-radius:var(--rs);padding:4px 12px;margin-top:6px;font-size:12px">${lines}</div>`;
 }
 
 // ── Test topics ───────────────────────────────────────────────
@@ -308,34 +370,34 @@ async function saveItem(item) {
 const SEED = [
   { id:'WP-001', name:'แผ่น Aluminum A1', test:'วัดสีชิ้นงาน (Color Measurement)',
     freqs:[{type:'days',value:30},{type:'days',value:90},{type:'days',value:180},{type:'days',value:365}],
-    freq:90, last:addDays(today(),-82).toISOString(),
+    freq:90, startDate:addDays(today(),-82).toISOString(), last:addDays(today(),-82).toISOString(),
     endDate:addDays(today(),280).toISOString(),
-    expected:'ΔE < 2.0', note:'ตรวจก่อนส่งลูกค้า',
+    expected:'ΔE < 2.0', note:'ตรวจก่อนส่งลูกค้า', desc:'แผ่นอลูมิเนียมชุบสี ชุดที่ 1',
     checklist:['บันทึกค่า L*, a*, b*','เปรียบเทียบมาตรฐาน','ถ่ายรูปชิ้นงาน','อัปเดต QC'],
     checkDone:[], lastResult:'', history:[], planAdj:null },
   { id:'WP-002', name:'แผ่น Steel B2', test:'ทดสอบความแข็ง (Hardness Test)',
     freqs:[{type:'days',value:180}], freq:180,
-    last:addDays(today(),-170).toISOString(), endDate:null,
-    expected:'HRC 45-55', note:'',
+    startDate:addDays(today(),-170).toISOString(), last:addDays(today(),-170).toISOString(),
+    endDate:null, expected:'HRC 45-55', note:'', desc:'',
     checklist:['ทดสอบ 5 จุด','บันทึกค่าเฉลี่ย','เปรียบเทียบสเปค'],
     checkDone:[], lastResult:'', history:[], planAdj:null },
   { id:'WP-003', name:'ชิ้นส่วน Plastic C', test:'ตรวจสอบความหนา (Thickness Check)',
     freqs:[{type:'monthly-day',value:1}], freq:30,
-    last:addDays(today(),-35).toISOString(),
+    startDate:addDays(today(),-35).toISOString(), last:addDays(today(),-35).toISOString(),
     endDate:addDays(today(),90).toISOString(),
-    expected:'2.5 ± 0.1 mm', note:'ใช้ไมโครมิเตอร์',
+    expected:'2.5 ± 0.1 mm', note:'ใช้ไมโครมิเตอร์', desc:'',
     checklist:['วัด 3 ตำแหน่ง','บันทึกสูงสุด/ต่ำสุด','อัปเดต Spec'],
     checkDone:[], lastResult:'', history:[], planAdj:null },
   { id:'WP-004', name:'แผ่น Composite D', test:'วัดสีชิ้นงาน (Color Measurement)',
     freqs:[{type:'days',value:90}], freq:90,
-    last:addDays(today(),-75).toISOString(), endDate:null,
-    expected:'ΔE < 1.5', note:'',
+    startDate:addDays(today(),-75).toISOString(), last:addDays(today(),-75).toISOString(),
+    endDate:null, expected:'ΔE < 1.5', note:'', desc:'',
     checklist:['บันทึกค่า L*, a*, b*','เปรียบเทียบมาตรฐาน','ถ่ายรูปชิ้นงาน'],
     checkDone:[], lastResult:'', history:[], planAdj:null },
   { id:'WP-005', name:'Rubber Seal E', test:'ทดสอบแรงดึง (Tensile Test)',
     freqs:[{type:'days',value:365}], freq:365,
-    last:addDays(today(),-300).toISOString(), endDate:null,
-    expected:'> 15 MPa', note:'ตรวจสอบทุกปี',
+    startDate:addDays(today(),-300).toISOString(), last:addDays(today(),-300).toISOString(),
+    endDate:null, expected:'> 15 MPa', note:'ตรวจสอบทุกปี', desc:'',
     checklist:['เตรียมตัวอย่าง','บันทึก tensile strength','บันทึก elongation'],
     checkDone:[], lastResult:'', history:[], planAdj:null },
 ];
@@ -347,8 +409,9 @@ async function seedIfEmpty() {
 
 // ── Dashboard ─────────────────────────────────────────────────
 function renderDashboard() {
-  const ov = items.filter(i=>getStatus(i)==='overdue');
-  const so = items.filter(i=>getStatus(i)==='soon');
+  const ov   = items.filter(i=>getStatus(i)==='overdue');
+  const so   = items.filter(i=>getStatus(i)==='soon');
+  const done = items.filter(i=>getStatus(i)==='done');
   document.getElementById('s-total').textContent   = items.length;
   document.getElementById('s-overdue').textContent = ov.length;
   document.getElementById('s-soon').textContent    = so.length;
@@ -357,13 +420,15 @@ function renderDashboard() {
   badge.style.display = cnt ? 'inline' : 'none';
   badge.textContent = cnt;
   const al = document.getElementById('alert-list');
-  if (![...ov,...so].length) {
-    al.innerHTML = '<div class="empty"><div class="ei">✅</div><div>ชิ้นงานทุกรายการปกติดี</div></div>'; return;
+  const actionItems = [...ov, ...so];
+  if (!actionItems.length) {
+    const doneMsg = done.length ? `<div class="tsm mt8" style="text-align:center">✅ ${done.length} โครงการเสร็จสิ้นแล้ว</div>` : '';
+    al.innerHTML = `<div class="empty"><div class="ei">✅</div><div>ชิ้นงานทุกรายการปกติดี</div>${doneMsg}</div>`; return;
   }
-  al.innerHTML = [...ov,...so].map(item=>`
+  al.innerHTML = actionItems.map(item=>`
     <div class="card" onclick="openModal('${item.id}')">
       <div class="row rb mt4"><span class="fw5" style="font-size:14px">${item.name}</span>${getBadge(item)}</div>
-      <div class="tsm mt4">${item.id} · ${item.test}</div>
+      <div class="tsm mt4">${item.id ? item.id+' · ':'' }${item.test}</div>
       <div class="tsm mt4">กำหนดถัดไป: <strong>${fmtDate(getNext(item))}</strong></div>
     </div>`).join('');
 }
@@ -380,33 +445,48 @@ function renderSchedule() {
   const sl = document.getElementById('schedule-list');
   if (!list.length) { sl.innerHTML='<div class="empty"><div class="ei">🔍</div><div>ไม่พบชิ้นงาน</div></div>'; return; }
   sl.innerHTML = list.map(item => {
+    const s   = getStatus(item);
     const d   = getDays(item);
-    const pct = Math.min(100,Math.max(0,Math.round((getActiveSpec(item).type==='days'?getActiveSpec(item).value:30 - Math.max(0,d)) / (getActiveSpec(item).type==='days'?getActiveSpec(item).value:30) * 100)));
-    const col = d<0?'var(--danger)':d<=7?'var(--warn)':'var(--ok)';
     const ep  = getEndDateProgress(item);
+    const done = s === 'done';
+
+    // Progress bar: % ของ freq แรกที่ยังไม่ผ่าน
+    let pct = 0;
+    if (!done) {
+      const entry = getNextEntry(item);
+      if (entry) {
+        const daysTotal = entry.spec.type==='days' ? entry.spec.value : 30;
+        pct = Math.min(100, Math.max(0, Math.round((daysTotal - Math.max(0,d)) / daysTotal * 100)));
+      }
+    } else { pct = 100; }
+    const col = done ? 'var(--ok)' : d<0 ? 'var(--danger)' : d<=7 ? 'var(--warn)' : 'var(--ok)';
     const hasAdj = item.planAdj && today() >= new Date(item.planAdj.fromDate);
     const adjBadge = hasAdj ? `<span class="badge bi" style="font-size:10px">แผนปรับ</span>` : '';
-    const freqLine = freqsLabel(item);
 
     let endBlock = '';
     if (ep) {
-      const remTxt = ep.remaining < 0
-        ? `<span style="color:var(--danger)">สิ้นสุดแล้ว ${Math.abs(ep.remaining)} วัน</span>`
-        : `เหลือ ${ep.remaining} วัน`;
-      const efCol = ep.pct > 90 ? 'var(--danger)' : ep.pct > 70 ? 'var(--warn)' : 'var(--ok)';
+      const remTxt = ep.isDone
+        ? `<span style="color:var(--ok);font-weight:500">✅ โครงการเสร็จสิ้น</span>`
+        : ep.remaining < 0
+          ? `<span style="color:var(--danger)">เกินกำหนด ${Math.abs(ep.remaining)} วัน</span>`
+          : `เหลือ ${ep.remaining} วัน`;
+      const efCol = ep.isDone ? 'var(--ok)' : ep.pct > 90 ? 'var(--danger)' : ep.pct > 70 ? 'var(--warn)' : 'var(--ok)';
       endBlock = `<div class="enddate-wrap">
-        <div class="enddate-label"><span>ความคืบหน้าโครงการ ${ep.pct}%</span><span>${remTxt}</span></div>
+        <div class="enddate-label"><span>ความคืบหน้า ${ep.pct}%</span><span>${remTxt}</span></div>
         <div class="ep"><div class="ef" style="width:${ep.pct}%;background:${efCol}"></div></div>
       </div>`;
     }
+
+    const startStr = item.startDate ? fmtDate(item.startDate) : fmtDate(item.last);
+    const nextStr  = done ? '—' : fmtDate(getNext(item));
 
     return `<div class="card" onclick="openModal('${item.id}')">
       <div class="row rb"><span class="fw5" style="font-size:14px">${item.name}</span><div class="row">${adjBadge}${getBadge(item)}</div></div>
       <div class="tsm mt4">${item.id ? item.id+' · ' : ''}${item.test}</div>
       ${item.desc ? `<div class="tsm mt4" style="color:var(--text3)">${item.desc}</div>` : ''}
-      <div class="tsm mt4" style="color:var(--text3)">ความถี่: ${freqLine}</div>
+      <div class="tsm mt4" style="color:var(--text3)">กำหนด: ${freqsLabel(item)}</div>
       <div class="pb"><div class="pf" style="width:${pct}%;background:${col}"></div></div>
-      <div class="row rb tsm"><span>ล่าสุด: ${fmtDate(item.last)}</span><span>ถัดไป: ${fmtDate(getNext(item))}</span></div>
+      <div class="row rb tsm"><span>เริ่ม: ${startStr}</span><span>${done ? '✅ สิ้นสุดแล้ว' : 'ถัดไป: '+nextStr}</span></div>
       ${endBlock}
     </div>`;
   }).join('');
@@ -588,7 +668,8 @@ async function addItem() {
   if (await dbGet('items',id)) { showToast('⚠️ เลขที่นี้มีอยู่แล้ว กรุณาใช้เลขที่อื่น'); return; }
   await saveItem({
     id, name, desc, test, freqs, freq:freqs[0].value||90,
-    last:new Date(last).toISOString(),
+    startDate: new Date(last).toISOString(),   // ✅ บันทึก startDate
+    last: new Date(last).toISOString(),
     endDate: endDate ? new Date(endDate).toISOString() : null,
     expected:exp||'-', note, checklist:cl, checkDone:[], lastResult:'', history:[], planAdj:null
   });
@@ -638,14 +719,22 @@ async function openModal(id) {
   editFreqChips.push(`<div class="fchip${hasMonthly?' sel':''}" data-v="monthly-day" onclick="this.classList.toggle('sel');document.getElementById('e-monthly-row').style.display=this.classList.contains('sel')?'block':'none'">ทุกวันที่...</div>`);
 
   const ep = getEndDateProgress(item);
-  const epBlock = ep ? `<div style="margin-bottom:12px">
-    <div class="enddate-label" style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:4px">
-      <span>ความคืบหน้าโครงการ ${ep.pct}%</span>
-      <span>${ep.remaining<0?`เกิน ${Math.abs(ep.remaining)} วัน`:`เหลือ ${ep.remaining} วัน`}</span>
-    </div>
-    <div class="ep"><div class="ef" style="width:${ep.pct}%;background:${ep.pct>90?'var(--danger)':ep.pct>70?'var(--warn)':'var(--ok)'}"></div></div>
-    <div style="font-size:10px;color:var(--text3);margin-top:3px">สิ้นสุด: ${fmtDate(item.endDate)}</div>
-  </div>` : '';
+  const epBlock = ep ? (() => {
+    if (ep.isDone) return `<div style="background:#EAF3DE;border-radius:var(--rs);padding:12px;margin-bottom:12px;text-align:center">
+      <div style="font-size:18px;margin-bottom:4px">🎉</div>
+      <div style="font-size:14px;font-weight:600;color:#3B6D11">โครงการเสร็จสิ้น 100%</div>
+      <div style="font-size:12px;color:#639922;margin-top:2px">สิ้นสุด: ${fmtDate(item.endDate)} · ระยะเวลา ${ep.total} วัน</div>
+    </div>`;
+    const remTxt = ep.remaining < 0 ? `เกินกำหนด ${Math.abs(ep.remaining)} วัน` : `เหลือ ${ep.remaining} วัน`;
+    const efCol  = ep.pct > 90 ? 'var(--danger)' : ep.pct > 70 ? 'var(--warn)' : 'var(--ok)';
+    return `<div style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:4px">
+        <span>ความคืบหน้าโครงการ ${ep.pct}%</span><span>${remTxt}</span>
+      </div>
+      <div class="ep"><div class="ef" style="width:${ep.pct}%;background:${efCol}"></div></div>
+      <div style="font-size:10px;color:var(--text3);margin-top:3px">สิ้นสุด: ${fmtDate(item.endDate)}</div>
+    </div>`;
+  })() : '';
 
   // Plan adjustment section
   const activeAdj = item.planAdj && today() >= new Date(item.planAdj.fromDate);
@@ -678,20 +767,32 @@ async function openModal(id) {
         <div class="g2" style="gap:8px">
           <div><div class="tsm">หัวข้อทดสอบ</div><div style="font-size:13px;font-weight:500;margin-top:2px">${item.test}</div></div>
           <div><div class="tsm">ผลลัพธ์ที่คาดหวัง</div><div style="font-size:13px;font-weight:500;margin-top:2px">${item.expected}</div></div>
-          <div><div class="tsm">ความถี่</div><div style="font-size:13px;font-weight:500;margin-top:2px">${freqsLabel(item)}</div></div>
+          <div><div class="tsm">วันเริ่มทดสอบ</div><div style="font-size:13px;font-weight:500;margin-top:2px;color:var(--primary)">${fmtDate(getStartDate(item))}</div></div>
           <div>
             <div class="tsm">กำหนดถัดไป</div>
-            <div style="font-size:13px;font-weight:500;margin-top:2px">${fmtDate(getNext(item))}</div>
-            ${(()=>{ const raw=getNextFromSpec(new Date(item.last),getActiveSpec(item)); const skipped=skipToWorkday(raw); return diffDays(skipped,raw)>0?`<div style="font-size:10px;color:var(--warn);margin-top:1px">⟳ เลื่อนจากวันหยุด (${fmtDate(raw)})</div>`:'' })()}
+            ${isProjectDone(item)
+              ? `<div style="font-size:13px;font-weight:500;margin-top:2px;color:var(--ok)">— โครงการเสร็จสิ้น</div>`
+              : `<div style="font-size:13px;font-weight:500;margin-top:2px">${fmtDate(getNext(item))}</div>
+                 ${(()=>{ const raw=getNextFromSpec(getStartDate(item),getActiveSpec(item)); const sk=skipToWorkday(raw); return diffDays(sk,raw)>0?`<div style="font-size:10px;color:var(--warn);margin-top:1px">⟳ เลื่อนจากวันหยุด (${fmtDate(raw)})</div>`:'' })()}`
+            }
           </div>
-          <div><div class="tsm">ทดสอบล่าสุด</div><div style="font-size:13px;font-weight:500;margin-top:2px">${fmtDate(item.last)}</div></div>
           ${item.endDate?`<div><div class="tsm">สิ้นสุดโครงการ</div><div style="font-size:13px;font-weight:500;margin-top:2px">${fmtDate(item.endDate)}</div></div>`:''}
           ${item.note?`<div><div class="tsm">หมายเหตุ</div><div style="font-size:13px;font-weight:500;margin-top:2px">${item.note}</div></div>`:''}
         </div>
       </div>
+
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px">📅 กำหนดการทดสอบทั้งหมด</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:4px">นับจากวันเริ่มทดสอบ: ${fmtDate(getStartDate(item))}</div>
+      ${freqsScheduleHtml(item)}
+
       ${adjBanner}
-      ${item.lastResult?`<div style="background:var(--surface2);border-radius:var(--rs);padding:10px 12px;margin-bottom:12px;font-size:13px"><span class="tsm">ผลล่าสุด: </span>${item.lastResult}</div>`:''}
-      <div style="font-size:13px;font-weight:600;margin-bottom:8px">✅ Checklist</div>
+      ${item.lastResult?`<div style="background:var(--surface2);border-radius:var(--rs);padding:10px 12px;margin:12px 0;font-size:13px"><span class="tsm">ผลล่าสุด: </span>${item.lastResult}</div>`:''}
+      ${isProjectDone(item) ? `
+        <div style="background:#EAF3DE;border:.5px solid var(--ok);border-radius:var(--rs);padding:12px;text-align:center;margin-top:12px">
+          <div style="font-size:13px;color:#3B6D11">โครงการนี้สิ้นสุดแล้ว ไม่มีการแจ้งเตือนเพิ่มเติม</div>
+          <button class="btn btn-d btn-sm" style="margin-top:8px" onclick="deleteItem('${id}')">ลบชิ้นงาน</button>
+        </div>` : `
+      <div style="font-size:13px;font-weight:600;margin:12px 0 8px">✅ Checklist</div>
       <div style="border:.5px solid var(--border);border-radius:var(--rs);padding:6px 12px;margin-bottom:14px">${checkHtml}</div>
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">📝 บันทึกผล</div>
       <div class="g2" style="margin-bottom:8px">
@@ -699,9 +800,9 @@ async function openModal(id) {
         <input class="fc" type="date" id="res-date" value="${new Date().toISOString().split('T')[0]}">
       </div>
       <div class="brow">
-        <button class="btn btn-p" onclick="completeTest('${id}')">บันทึกและตั้งกำหนดถัดไป</button>
+        <button class="btn btn-p" onclick="completeTest('${id}')">บันทึกและตัดความถี่ที่ผ่านแล้ว</button>
         <button class="btn btn-d" onclick="deleteItem('${id}')">ลบชิ้นงาน</button>
-      </div>
+      </div>`}
     </div>
 
     <!-- Tab 1: Edit -->
@@ -720,7 +821,8 @@ async function openModal(id) {
         </div>
       </div>
       <div class="g2">
-        <div class="fg"><label class="fl">วันทดสอบล่าสุด</label><input class="fc" type="date" id="e-last" value="${isoDate(item.last)}"></div>
+        <div class="fg"><label class="fl">วันเริ่มทดสอบ (ไม่เปลี่ยนแปลง)</label><input class="fc" type="text" value="${fmtDate(getStartDate(item))}" disabled style="opacity:.6"></div>
+        <div class="fg"><label class="fl">วันทดสอบล่าสุด (อัปเดตหลังทดสอบจริง)</label><input class="fc" type="date" id="e-last" value="${isoDate(item.last)}"></div>
         <div class="fg"><label class="fl">วันสิ้นสุดโครงการ</label><input class="fc" type="date" id="e-enddate" value="${item.endDate?isoDate(item.endDate):''}"></div>
       </div>
       <div class="g2">
@@ -858,18 +960,26 @@ async function completeTest(id) {
     result: rv,
     freqBefore: freqsLabel(item)
   });
+  // ✅ อัปเดต last แต่ไม่เปลี่ยน startDate
   item.last       = new Date(rd).toISOString();
   item.lastResult = rv;
   item.checkDone  = [];
-  // Clear plan adj if date passed
+  // ✅ ตัด freq ที่ผ่านไปแล้วออก (นับจาก startDate)
+  prunePassedFreqs(item);
+  // Clear plan adj if applied
   if (item.planAdj && today() >= new Date(item.planAdj.fromDate)) {
-    item.freqs = [item.planAdj.spec];
+    item.freqs   = [item.planAdj.spec];
     item.planAdj = null;
   }
   await saveItem(item);
   closeModal();
-  showToast(`✅ บันทึกแล้ว! ถัดไป: ${fmtDate(getNext(item))}`);
-  scheduleNotifications();
+  if (isProjectDone(item)) {
+    showToast('🎉 โครงการเสร็จสิ้น 100%! ไม่มีการแจ้งเตือนเพิ่มเติม');
+  } else {
+    const remaining = item.freqs ? item.freqs.length : 1;
+    showToast(`✅ บันทึกแล้ว! เหลือ ${remaining} ความถี่ · ถัดไป: ${fmtDate(getNext(item))}`);
+  }
+  fireNotifications(false);
 }
 
 async function deleteItem(id) {
@@ -910,10 +1020,11 @@ async function saveEdit(id) {
   if (!name||!last) { showToast('⚠️ กรุณากรอกข้อมูลที่จำเป็น'); return; }
   if (!eFreqs.length) { showToast('⚠️ เลือกความถี่อย่างน้อย 1 รายการ'); return; }
   const item = await dbGet('items', id);
+  // startDate ไม่เปลี่ยนเมื่อแก้ไข — ใช้ค่าเดิม
   Object.assign(item, {
-    name, desc, test, freqs:eFreqs, last:new Date(last).toISOString(),
+    name, desc, test, freqs: eFreqs, last: new Date(last).toISOString(),
     endDate: endDate ? new Date(endDate).toISOString() : null,
-    expected:exp||'-', note, checklist:cl
+    expected: exp||'-', note, checklist: cl
   });
   await saveItem(item);
   closeModal();
@@ -983,7 +1094,9 @@ function checkNotifStatus() {
 function fireNotifications(hourlyMode=false) {
   if (!('Notification' in window)||Notification.permission!=='granted') return;
   const cfg = _notifSettings;
+  // ไม่แจ้งเตือนชิ้นงานที่ครบ endDate แล้ว
   const alerts = items.filter(i=>{
+    if (isProjectDone(i)) return false;
     const d = getDays(i);
     if (d < 0  && cfg.onOverdue) return true;
     if (d === 0 && cfg.onDay)    return true;
@@ -998,7 +1111,7 @@ function fireNotifications(hourlyMode=false) {
   alerts.forEach(item=>{
     const d = getDays(item);
     const msg = d<0?`⚠️ เกินกำหนด ${Math.abs(d)} วัน`:d===0?'🔴 ถึงกำหนดวันนี้!':d<=3?`🟡 อีก ${d} วัน`:`🟢 อีก ${d} วัน`;
-    new Notification(`TestNotify — ${item.id}`, {
+    new Notification(`TestNotify — ${item.id||item.name}`, {
       body:`${item.name}\n${item.test}\n${msg}`,
       icon:'icons/icon-192.png',
       tag: hourlyMode ? `hr-${item.id}` : item.id,
