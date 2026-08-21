@@ -1,7 +1,7 @@
 /* ============================================================
-   TestNotify PWA v1.5 — app.js
-   v1.5: startDate field · count-from-start scheduling
-         auto-prune completed freqs · stop at endDate
+   TestNotify PWA v1.6 — app.js
+   v1.6: isProjectDone requires BOTH endDate passed AND all freqs
+         recorded — isPending state shows warning + keeps alerts
    ============================================================ */
 
 // ── DB ────────────────────────────────────────────────────────
@@ -152,9 +152,29 @@ function getActiveSpec(item) {
 }
 
 // ตรวจว่าโครงการสิ้นสุดแล้วหรือยัง
+// โครงการถือว่า "เสร็จสิ้น" ต่อเมื่อ:
+//   1. ผ่านวันสิ้นสุด (endDate) แล้ว  AND
+//   2. ไม่มี freq ใดที่รอบันทึกอยู่ (freqs ทั้งหมดถูก prune แล้ว หรือ history มีครบ)
+// → ถ้ายังมี freq ค้างอยู่ ให้แจ้งเตือนต่อ แม้ endDate ผ่านไปแล้ว
 function isProjectDone(item) {
   if (!item.endDate) return false;
-  return today() >= new Date(item.endDate);
+  const endPassed = today() >= new Date(item.endDate);
+  if (!endPassed) return false;
+  // ตรวจว่า freq ที่เหลือทั้งหมดถูก record ใน history แล้ว
+  // วิธีง่ายที่สุด: ดูว่า history มีรายการที่ผ่านวัน endDate หรือ freq ทุกตัวถูก prune แล้ว
+  const start = getStartDate(item);
+  const freqs = item.freqs && item.freqs.length ? item.freqs : [];
+  // ถ้า freqs ว่างเปล่า (prune หมดแล้ว) → เสร็จสิ้น
+  if (freqs.length === 0) return true;
+  // ถ้า freqs ยังมีอยู่ แต่ทุกตัวได้รับการบันทึก (due date ผ่านแล้วและมี history รองรับ)
+  const recordedDates = (item.history||[]).map(h => isoDate(h.date));
+  const allRecorded = freqs.every(spec => {
+    const due = skipToWorkday(getNextFromSpec(start, spec));
+    // ถ้า due ผ่านมาแล้ว แต่ไม่มี history ที่ตรงหรือหลัง due → ยังไม่เสร็จ
+    const hasRecord = (item.history||[]).some(h => new Date(h.date) >= due);
+    return !hasRecord ? false : true; // ถ้าไม่มี record หลัง due = ยังค้างอยู่
+  });
+  return allRecorded;
 }
 
 function getDays(item) {
@@ -202,8 +222,10 @@ function getEndDateProgress(item) {
   const elapsed   = diffDays(now, start);
   const pct       = Math.min(100, Math.max(0, Math.round(elapsed / total * 100)));
   const remaining = diffDays(end, now);
-  const isDone    = now >= end;
-  return { pct, remaining, end, total, elapsed, isDone };
+  const endPassed = now >= end;          // วันผ่านแล้ว
+  const isDone    = isProjectDone(item); // ผ่านแล้ว AND บันทึกครบ
+  const isPending = endPassed && !isDone; // ผ่านวันแล้ว แต่ยังไม่บันทึกครบ
+  return { pct, remaining, end, total, elapsed, isDone, isPending, endPassed };
 }
 
 function showToast(msg) {
@@ -465,12 +487,21 @@ function renderSchedule() {
 
     let endBlock = '';
     if (ep) {
-      const remTxt = ep.isDone
-        ? `<span style="color:var(--ok);font-weight:500">✅ โครงการเสร็จสิ้น</span>`
-        : ep.remaining < 0
-          ? `<span style="color:var(--danger)">เกินกำหนด ${Math.abs(ep.remaining)} วัน</span>`
-          : `เหลือ ${ep.remaining} วัน`;
-      const efCol = ep.isDone ? 'var(--ok)' : ep.pct > 90 ? 'var(--danger)' : ep.pct > 70 ? 'var(--warn)' : 'var(--ok)';
+      let remTxt;
+      let efCol;
+      if (ep.isDone) {
+        remTxt = `<span style="color:var(--ok);font-weight:500">✅ โครงการเสร็จสิ้น</span>`;
+        efCol  = 'var(--ok)';
+      } else if (ep.isPending) {
+        remTxt = `<span style="color:var(--warn);font-weight:500">⚠️ เลยกำหนด — รอบันทึกผล</span>`;
+        efCol  = 'var(--warn)';
+      } else if (ep.remaining < 0) {
+        remTxt = `<span style="color:var(--danger)">เกินกำหนด ${Math.abs(ep.remaining)} วัน</span>`;
+        efCol  = 'var(--danger)';
+      } else {
+        remTxt = `เหลือ ${ep.remaining} วัน`;
+        efCol  = ep.pct > 90 ? 'var(--danger)' : ep.pct > 70 ? 'var(--warn)' : 'var(--ok)';
+      }
       endBlock = `<div class="enddate-wrap">
         <div class="enddate-label"><span>ความคืบหน้า ${ep.pct}%</span><span>${remTxt}</span></div>
         <div class="ep"><div class="ef" style="width:${ep.pct}%;background:${efCol}"></div></div>
@@ -616,16 +647,33 @@ function renderYear() {
 
 // ── Notif preview ─────────────────────────────────────────────
 function renderNotifPreview() {
-  const alerts = items.filter(i=>getDays(i)<=7);
+  const alerts = items.filter(i => {
+    if (isProjectDone(i)) return false;
+    const ep = getEndDateProgress(i);
+    if (ep && ep.isPending) return true;
+    return getDays(i) <= 7;
+  });
   const c = document.getElementById('phone-notifs-container');
   if (!c) return;
   c.innerHTML = !alerts.length
     ? '<div class="tsm" style="text-align:center;padding:12px">ไม่มีการแจ้งเตือนในขณะนี้</div>'
     : alerts.map(item=>{
-        const d=getDays(item), msg=d<0?`เกินกำหนด ${Math.abs(d)} วัน`:d===0?'ถึงกำหนดวันนี้':`อีก ${d} วัน`;
-        return`<div class="nc${d<0?' danger':d<=3?' warn':''}">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px"><span style="font-size:11px;color:var(--text3);font-weight:500">TestNotify</span><span style="font-size:11px;color:var(--text3);margin-left:auto">08:00</span></div>
-          <div style="font-size:13px;font-weight:600;margin-bottom:2px">📋 ${item.id} — ${item.name}</div>
+        const ep = getEndDateProgress(item);
+        const d  = getDays(item);
+        let msg, cls;
+        if (ep && ep.isPending) {
+          msg = 'เลยวันสิ้นสุดโครงการ — รอบันทึกผล';
+          cls = 'warn';
+        } else {
+          msg = d<0?`เกินกำหนด ${Math.abs(d)} วัน`:d===0?'ถึงกำหนดวันนี้':`อีก ${d} วัน`;
+          cls = d<0?' danger':d<=3?' warn':'';
+        }
+        return`<div class="nc${cls}">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+            <span style="font-size:11px;color:var(--text3);font-weight:500">TestNotify</span>
+            <span style="font-size:11px;color:var(--text3);margin-left:auto">08:00</span>
+          </div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:2px">📋 ${item.id||''} ${item.name}</div>
           <div style="font-size:12px;color:var(--text2)">${item.test} · ${msg}</div>
         </div>`;
       }).join('');
@@ -720,13 +768,27 @@ async function openModal(id) {
 
   const ep = getEndDateProgress(item);
   const epBlock = ep ? (() => {
-    if (ep.isDone) return `<div style="background:#EAF3DE;border-radius:var(--rs);padding:12px;margin-bottom:12px;text-align:center">
-      <div style="font-size:18px;margin-bottom:4px">🎉</div>
-      <div style="font-size:14px;font-weight:600;color:#3B6D11">โครงการเสร็จสิ้น 100%</div>
-      <div style="font-size:12px;color:#639922;margin-top:2px">สิ้นสุด: ${fmtDate(item.endDate)} · ระยะเวลา ${ep.total} วัน</div>
-    </div>`;
-    const remTxt = ep.remaining < 0 ? `เกินกำหนด ${Math.abs(ep.remaining)} วัน` : `เหลือ ${ep.remaining} วัน`;
-    const efCol  = ep.pct > 90 ? 'var(--danger)' : ep.pct > 70 ? 'var(--warn)' : 'var(--ok)';
+    if (ep.isDone) {
+      return `<div style="background:#EAF3DE;border-radius:var(--rs);padding:12px;margin-bottom:12px;text-align:center">
+        <div style="font-size:18px;margin-bottom:4px">🎉</div>
+        <div style="font-size:14px;font-weight:600;color:#3B6D11">โครงการเสร็จสิ้น 100%</div>
+        <div style="font-size:12px;color:#639922;margin-top:2px">สิ้นสุด: ${fmtDate(item.endDate)} · ระยะเวลา ${ep.total} วัน</div>
+      </div>`;
+    }
+    if (ep.isPending) {
+      return `<div style="background:#FAEEDA;border:.5px solid var(--warn);border-radius:var(--rs);padding:12px;margin-bottom:12px">
+        <div style="font-size:13px;font-weight:600;color:#854F0B;margin-bottom:4px">⚠️ เลยวันสิ้นสุดโครงการแล้ว — ยังรอบันทึกผล</div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#854F0B;margin-bottom:4px">
+          <span>ความคืบหน้า ${ep.pct}%</span><span>สิ้นสุด: ${fmtDate(item.endDate)}</span>
+        </div>
+        <div class="ep"><div class="ef" style="width:${ep.pct}%;background:var(--warn)"></div></div>
+        <div style="font-size:11px;color:#854F0B;margin-top:6px">กรุณาบันทึกผลการทดสอบเพื่อปิดโครงการ</div>
+      </div>`;
+    }
+    const remTxt = ep.remaining < 0
+      ? `เกินกำหนด ${Math.abs(ep.remaining)} วัน`
+      : `เหลือ ${ep.remaining} วัน`;
+    const efCol = ep.pct > 90 ? 'var(--danger)' : ep.pct > 70 ? 'var(--warn)' : 'var(--ok)';
     return `<div style="margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:4px">
         <span>ความคืบหน้าโครงการ ${ep.pct}%</span><span>${remTxt}</span>
@@ -787,7 +849,7 @@ async function openModal(id) {
 
       ${adjBanner}
       ${item.lastResult?`<div style="background:var(--surface2);border-radius:var(--rs);padding:10px 12px;margin:12px 0;font-size:13px"><span class="tsm">ผลล่าสุด: </span>${item.lastResult}</div>`:''}
-      ${isProjectDone(item) ? `
+      ${(isProjectDone(item)) ? `
         <div style="background:#EAF3DE;border:.5px solid var(--ok);border-radius:var(--rs);padding:12px;text-align:center;margin-top:12px">
           <div style="font-size:13px;color:#3B6D11">โครงการนี้สิ้นสุดแล้ว ไม่มีการแจ้งเตือนเพิ่มเติม</div>
           <button class="btn btn-d btn-sm" style="margin-top:8px" onclick="deleteItem('${id}')">ลบชิ้นงาน</button>
@@ -1094,9 +1156,12 @@ function checkNotifStatus() {
 function fireNotifications(hourlyMode=false) {
   if (!('Notification' in window)||Notification.permission!=='granted') return;
   const cfg = _notifSettings;
-  // ไม่แจ้งเตือนชิ้นงานที่ครบ endDate แล้ว
+  // แจ้งเตือนทุกชิ้นงานที่ยังไม่เสร็จ (isDone=false)
+  // รวมถึง isPending = เลยวันสิ้นสุดแต่ยังไม่บันทึกผล
   const alerts = items.filter(i=>{
-    if (isProjectDone(i)) return false;
+    if (isProjectDone(i)) return false; // เสร็จจริง → ไม่แจ้ง
+    const ep = getEndDateProgress(i);
+    if (ep && ep.isPending) return true; // เลยกำหนดแต่รอบันทึก → แจ้งเสมอ
     const d = getDays(i);
     if (d < 0  && cfg.onOverdue) return true;
     if (d === 0 && cfg.onDay)    return true;
@@ -1109,13 +1174,19 @@ function fireNotifications(hourlyMode=false) {
     return;
   }
   alerts.forEach(item=>{
-    const d = getDays(item);
-    const msg = d<0?`⚠️ เกินกำหนด ${Math.abs(d)} วัน`:d===0?'🔴 ถึงกำหนดวันนี้!':d<=3?`🟡 อีก ${d} วัน`:`🟢 อีก ${d} วัน`;
+    const ep = getEndDateProgress(item);
+    let msg;
+    if (ep && ep.isPending) {
+      msg = `⚠️ เลยวันสิ้นสุดโครงการแล้ว — กรุณาบันทึกผล`;
+    } else {
+      const d = getDays(item);
+      msg = d<0?`⚠️ เกินกำหนด ${Math.abs(d)} วัน`:d===0?'🔴 ถึงกำหนดวันนี้!':d<=3?`🟡 อีก ${d} วัน`:`🟢 อีก ${d} วัน`;
+    }
     new Notification(`TestNotify — ${item.id||item.name}`, {
       body:`${item.name}\n${item.test}\n${msg}`,
       icon:'icons/icon-192.png',
       tag: hourlyMode ? `hr-${item.id}` : item.id,
-      requireInteraction: d <= 0
+      requireInteraction: true
     });
   });
 }
