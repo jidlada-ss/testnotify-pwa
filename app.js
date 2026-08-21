@@ -1,6 +1,7 @@
 /* ============================================================
-   TestNotify PWA v1.7 — app.js
-   v1.7: editable startDate in edit tab
+   TestNotify PWA v1.8 — app.js
+   v1.8: record uses today() auto · prune only recorded freqs
+         schedule table shows pending-past vs recorded-past correctly
    ============================================================ */
 
 // ── DB ────────────────────────────────────────────────────────
@@ -198,15 +199,23 @@ function getBadge(item) {
   return `<span class="badge bo">อีก ${d} วัน</span>`;
 }
 
-// Prune freqs ที่ผ่าน startDate + value ไปแล้ว (เรียกตอน completeTest)
+// Prune freqs ที่ผ่านไปแล้ว **และ** มี history รองรับแล้วเท่านั้น
+// (ไม่ตัดถ้ายังไม่บันทึกผล แม้วันจะผ่านไปแล้ว)
 function prunePassedFreqs(item) {
   if (!item.freqs || item.freqs.length <= 1) return item;
-  const start = getStartDate(item);
+  const start   = getStartDate(item);
+  const history = item.history || [];
+
   const remaining = item.freqs.filter(spec => {
-    const due = getNextFromSpec(start, spec);
-    return due > today(); // เก็บเฉพาะที่ยังไม่ถึง
+    const due = skipToWorkday(getNextFromSpec(start, spec));
+    const isPast      = due <= today();
+    const hasRecord   = history.some(h => new Date(h.date) >= due);
+    // ตัดออกเฉพาะ: ผ่านไปแล้ว AND มีการบันทึกผลแล้ว
+    if (isPast && hasRecord) return false;
+    return true;
   });
-  item.freqs = remaining.length ? remaining : [item.freqs[item.freqs.length - 1]]; // เก็บอย่างน้อย 1
+
+  item.freqs = remaining.length ? remaining : [item.freqs[item.freqs.length - 1]];
   return item;
 }
 
@@ -252,22 +261,47 @@ function freqsLabel(item) {
   return item.freqs.map(specLabel).join(' → ');
 }
 
-// แสดงกำหนดการทั้งหมดที่ยังเหลืออยู่ (นับจาก startDate)
+// แสดงกำหนดการทั้งหมด (นับจาก startDate) พร้อมสถานะที่ถูกต้อง
 function freqsScheduleHtml(item) {
   if (!item.freqs || !item.freqs.length) return '';
   const start = getStartDate(item);
+  const history = item.history || [];
+
   const lines = item.freqs.map(spec => {
-    const raw   = getNextFromSpec(start, spec);
-    const date  = skipToWorkday(raw);
-    const d     = diffDays(date, today());
-    const isPast = d < 0;
-    const cls   = isPast ? 'color:var(--text3);text-decoration:line-through' : d<=7 ? 'color:var(--warn);font-weight:500' : 'color:var(--text2)';
-    const tag   = isPast ? '✓ ผ่านแล้ว' : d===0 ? '🔴 วันนี้' : d<=7 ? `🟡 อีก ${d} วัน` : `🟢 อีก ${d} วัน`;
-    return `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:.5px solid var(--border);${cls}">
-      <span>${specLabel(spec)}</span>
-      <span>${fmtDate(date)} &nbsp;${tag}</span>
+    const raw  = getNextFromSpec(start, spec);
+    const date = skipToWorkday(raw);
+    const d    = diffDays(date, today());
+
+    // ตรวจว่ามีการบันทึกผลที่วันนั้นหรือหลังจากนั้นแล้วหรือยัง
+    const hasRecord = history.some(h => new Date(h.date) >= date);
+    const isPastUnrecorded = d < 0 && !hasRecord;  // ผ่านแล้ว แต่ยังไม่บันทึก
+    const isPastRecorded   = d < 0 && hasRecord;   // ผ่านแล้ว และบันทึกแล้ว
+
+    let cls, tag;
+    if (isPastRecorded) {
+      cls = 'color:var(--text3);text-decoration:line-through';
+      tag = '✅ บันทึกแล้ว';
+    } else if (isPastUnrecorded) {
+      // ผ่านแล้วแต่ยังไม่บันทึก → แดง ไม่ขีดฆ่า
+      cls = 'color:var(--danger);font-weight:500';
+      tag = `🔴 เกิน ${Math.abs(d)} วัน — รอบันทึก`;
+    } else if (d === 0) {
+      cls = 'color:var(--danger);font-weight:500';
+      tag = '🔴 วันนี้';
+    } else if (d <= 7) {
+      cls = 'color:var(--warn);font-weight:500';
+      tag = `🟡 อีก ${d} วัน`;
+    } else {
+      cls = 'color:var(--text2)';
+      tag = `🟢 อีก ${d} วัน`;
+    }
+
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:.5px solid var(--border);${cls}">
+      <span style="font-weight:500">${specLabel(spec)}</span>
+      <span style="font-size:11px;text-align:right">${fmtDate(date)}<br>${tag}</span>
     </div>`;
   }).join('');
+
   return `<div style="border:.5px solid var(--border);border-radius:var(--rs);padding:4px 12px;margin-top:6px;font-size:12px">${lines}</div>`;
 }
 
@@ -855,13 +889,13 @@ async function openModal(id) {
         </div>` : `
       <div style="font-size:13px;font-weight:600;margin:12px 0 8px">✅ Checklist</div>
       <div style="border:.5px solid var(--border);border-radius:var(--rs);padding:6px 12px;margin-bottom:14px">${checkHtml}</div>
-      <div style="font-size:13px;font-weight:600;margin-bottom:8px">📝 บันทึกผล</div>
-      <div class="g2" style="margin-bottom:8px">
-        <input class="fc" type="text" id="res-val" placeholder="ผลลัพธ์" value="${item.lastResult||''}">
-        <input class="fc" type="date" id="res-date" value="${new Date().toISOString().split('T')[0]}">
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">📝 บันทึกผลการทดสอบ</div>
+      <div style="background:var(--surface2);border-radius:var(--rs);padding:8px 12px;margin-bottom:8px;font-size:12px;color:var(--text2)">
+        📅 วันที่บันทึก: <strong style="color:var(--text)">${fmtDate(today())}</strong> (วันนี้อัตโนมัติ)
       </div>
+      <input class="fc" type="text" id="res-val" placeholder="ระบุผลลัพธ์ที่ได้ (ไม่บังคับ)" value="${item.lastResult||''}" style="margin-bottom:8px">
       <div class="brow">
-        <button class="btn btn-p" onclick="completeTest('${id}')">บันทึกและตัดความถี่ที่ผ่านแล้ว</button>
+        <button class="btn btn-p" onclick="completeTest('${id}')">✅ บันทึกผลวันนี้</button>
         <button class="btn btn-d" onclick="deleteItem('${id}')">ลบชิ้นงาน</button>
       </div>`}
     </div>
@@ -1017,22 +1051,22 @@ async function toggleCheck(id, idx, val) {
 
 async function completeTest(id) {
   const rv = document.getElementById('res-val').value.trim();
-  const rd = document.getElementById('res-date').value;
-  if (!rd) { showToast('⚠️ กรุณาระบุวันที่ทดสอบ'); return; }
+  // ✅ ใช้วันปัจจุบันอัตโนมัติ ไม่ต้องกรอกวันย้อนหลัง
+  const recordDate = today();
   const item = await dbGet('items', id);
   if (!item.history) item.history = [];
   item.history.push({
-    date: new Date(rd).toISOString(),
-    result: rv,
+    date:      recordDate.toISOString(),
+    result:    rv,
     freqBefore: freqsLabel(item)
   });
-  // ✅ อัปเดต last แต่ไม่เปลี่ยน startDate
-  item.last       = new Date(rd).toISOString();
+  // อัปเดต last = วันนี้ แต่ไม่เปลี่ยน startDate
+  item.last       = recordDate.toISOString();
   item.lastResult = rv;
   item.checkDone  = [];
-  // ✅ ตัด freq ที่ผ่านไปแล้วออก (นับจาก startDate)
+  // ตัด freq ที่ผ่านไปและบันทึกแล้วออก
   prunePassedFreqs(item);
-  // Clear plan adj if applied
+  // Apply plan adj if active
   if (item.planAdj && today() >= new Date(item.planAdj.fromDate)) {
     item.freqs   = [item.planAdj.spec];
     item.planAdj = null;
@@ -1043,7 +1077,7 @@ async function completeTest(id) {
     showToast('🎉 โครงการเสร็จสิ้น 100%! ไม่มีการแจ้งเตือนเพิ่มเติม');
   } else {
     const remaining = item.freqs ? item.freqs.length : 1;
-    showToast(`✅ บันทึกแล้ว! เหลือ ${remaining} ความถี่ · ถัดไป: ${fmtDate(getNext(item))}`);
+    showToast(`✅ บันทึกแล้ว ${fmtDate(recordDate)} · เหลือ ${remaining} ความถี่ · ถัดไป: ${fmtDate(getNext(item))}`);
   }
   fireNotifications(false);
 }
