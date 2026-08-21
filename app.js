@@ -1,7 +1,6 @@
 /* ============================================================
-   TestNotify PWA v1.6 — app.js
-   v1.6: isProjectDone requires BOTH endDate passed AND all freqs
-         recorded — isPending state shows warning + keeps alerts
+   TestNotify PWA v1.7 — app.js
+   v1.7: editable startDate in edit tab
    ============================================================ */
 
 // ── DB ────────────────────────────────────────────────────────
@@ -883,7 +882,12 @@ async function openModal(id) {
         </div>
       </div>
       <div class="g2">
-        <div class="fg"><label class="fl">วันเริ่มทดสอบ (ไม่เปลี่ยนแปลง)</label><input class="fc" type="text" value="${fmtDate(getStartDate(item))}" disabled style="opacity:.6"></div>
+        <div class="fg">
+          <label class="fl">วันเริ่มทดสอบ *
+            <span style="font-size:10px;color:var(--warn);margin-left:6px">⚠️ การเปลี่ยนจะคำนวณกำหนดการใหม่ทั้งหมด</span>
+          </label>
+          <input class="fc" type="date" id="e-startdate" value="${isoDate(getStartDate(item))}">
+        </div>
         <div class="fg"><label class="fl">วันทดสอบล่าสุด (อัปเดตหลังทดสอบจริง)</label><input class="fc" type="date" id="e-last" value="${isoDate(item.last)}"></div>
         <div class="fg"><label class="fl">วันสิ้นสุดโครงการ</label><input class="fc" type="date" id="e-enddate" value="${item.endDate?isoDate(item.endDate):''}"></div>
       </div>
@@ -1054,15 +1058,16 @@ async function deleteItem(id) {
 
 // ── Save Edit ─────────────────────────────────────────────────
 async function saveEdit(id) {
-  const name    = document.getElementById('e-name').value.trim();
-  const desc    = document.getElementById('e-desc')?.value.trim()||'';
-  const test    = document.getElementById('e-test').value;
-  const last    = document.getElementById('e-last').value;
-  const endDate = document.getElementById('e-enddate').value;
-  const exp     = document.getElementById('e-expected').value.trim();
-  const note    = document.getElementById('e-note').value.trim();
-  const ckRaw   = document.getElementById('e-checklist').value;
-  const cl      = ckRaw ? ckRaw.split(',').map(s=>s.trim()).filter(Boolean) : [];
+  const name      = document.getElementById('e-name').value.trim();
+  const desc      = document.getElementById('e-desc')?.value.trim()||'';
+  const test      = document.getElementById('e-test').value;
+  const startDate = document.getElementById('e-startdate').value;
+  const last      = document.getElementById('e-last').value;
+  const endDate   = document.getElementById('e-enddate').value;
+  const exp       = document.getElementById('e-expected').value.trim();
+  const note      = document.getElementById('e-note').value.trim();
+  const ckRaw     = document.getElementById('e-checklist').value;
+  const cl        = ckRaw ? ckRaw.split(',').map(s=>s.trim()).filter(Boolean) : [];
 
   // Collect edit freqs
   const eFreqs = [];
@@ -1079,18 +1084,31 @@ async function saveEdit(id) {
     }
   });
 
-  if (!name||!last) { showToast('⚠️ กรุณากรอกข้อมูลที่จำเป็น'); return; }
+  if (!name)      { showToast('⚠️ กรุณากรอกชื่อชิ้นงาน'); return; }
+  if (!startDate) { showToast('⚠️ กรุณาระบุวันเริ่มทดสอบ'); return; }
+  if (!last)      { showToast('⚠️ กรุณาระบุวันทดสอบล่าสุด'); return; }
+  if (new Date(startDate) > new Date(last)) {
+    showToast('⚠️ วันเริ่มทดสอบต้องไม่เกินวันทดสอบล่าสุด'); return;
+  }
   if (!eFreqs.length) { showToast('⚠️ เลือกความถี่อย่างน้อย 1 รายการ'); return; }
+
   const item = await dbGet('items', id);
-  // startDate ไม่เปลี่ยนเมื่อแก้ไข — ใช้ค่าเดิม
+  const startChanged = isoDate(getStartDate(item)) !== startDate;
+
   Object.assign(item, {
-    name, desc, test, freqs: eFreqs, last: new Date(last).toISOString(),
+    name, desc, test, freqs: eFreqs,
+    startDate: new Date(startDate).toISOString(),  // ✅ บันทึก startDate ใหม่
+    last: new Date(last).toISOString(),
     endDate: endDate ? new Date(endDate).toISOString() : null,
     expected: exp||'-', note, checklist: cl
   });
   await saveItem(item);
   closeModal();
-  showToast('✅ แก้ไขข้อมูลเรียบร้อย');
+  if (startChanged) {
+    showToast('✅ แก้ไขแล้ว — กำหนดการคำนวณใหม่จากวันเริ่มทดสอบ');
+  } else {
+    showToast('✅ แก้ไขข้อมูลเรียบร้อย');
+  }
 }
 
 // ── Notifications ─────────────────────────────────────────────
