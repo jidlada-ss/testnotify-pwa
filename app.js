@@ -1,7 +1,7 @@
 /* ============================================================
-   TestNotify PWA v1.8 — app.js
-   v1.8: record uses today() auto · prune only recorded freqs
-         schedule table shows pending-past vs recorded-past correctly
+   TestNotify PWA v1.9 — app.js
+   v1.9: fix getNextEntry — skip recorded freqs correctly,
+         repeating single-freq uses last for next calc
    ============================================================ */
 
 // ── DB ────────────────────────────────────────────────────────
@@ -123,10 +123,10 @@ function getNextFromSpec(fromDate, spec) {
   return addDays(d, 90);
 }
 
-// คำนวณวันถัดไปทั้งหมดจาก startDate (ยังไม่ผ่านไป)
+// คำนวณวันถัดไปทั้งหมดจาก startDate
 function getAllNextDates(item) {
   const start = getStartDate(item);
-  const freqs  = item.freqs && item.freqs.length ? item.freqs : [{ type:'days', value: item.freq||90 }];
+  const freqs = item.freqs && item.freqs.length ? item.freqs : [{ type:'days', value: item.freq||90 }];
   return freqs.map(spec => ({
     spec,
     raw:  getNextFromSpec(start, spec),
@@ -134,11 +134,30 @@ function getAllNextDates(item) {
   })).sort((a,b) => a.date - b.date);
 }
 
-// วันถัดไปที่ใกล้ที่สุด (ยังอยู่ในอนาคต หรือ overdue)
+// คืน freq ถัดไปที่ยัง "รอบันทึก"
+// - วนทุก freq ตามลำดับเวลา: ถ้า freq นั้นยังไม่มี history รองรับ → คืนทันที
+// - ถ้าบันทึกครบทุก freq แล้ว:
+//     • freqs หลายรายการ (one-time schedule) → คืน freq สุดท้าย (เพื่อแสดงวันปิด)
+//     • freq เดียว (repeating) → คำนวณ next จาก item.last
 function getNextEntry(item) {
-  const all = getAllNextDates(item);
-  // Return the earliest one (first in sorted list) — ยังไม่ prune ในหน่วยความจำ
-  return all[0] || null;
+  const all     = getAllNextDates(item);
+  const history = item.history || [];
+
+  for (const entry of all) {
+    const hasRecord = history.some(h => new Date(h.date) >= entry.date);
+    if (!hasRecord) return entry; // freq นี้ยังรอบันทึก → คืนทันที
+  }
+
+  // ครบทุก freq แล้ว
+  if (all.length > 1) {
+    // one-time multi-freq schedule → เสร็จแล้ว คืน freq สุดท้าย
+    return all[all.length - 1];
+  }
+
+  // single repeating freq → คำนวณ next จาก last (วันทดสอบล่าสุด)
+  const spec         = all[0].spec;
+  const nextFromLast = skipToWorkday(getNextFromSpec(new Date(item.last), spec));
+  return { spec, raw: getNextFromSpec(new Date(item.last), spec), date: nextFromLast };
 }
 
 function getNext(item) {
