@@ -1,7 +1,6 @@
 /* ============================================================
-   TestNotify PWA v1.9 — app.js
-   v1.9: fix getNextEntry — skip recorded freqs correctly,
-         repeating single-freq uses last for next calc
+   TestNotify PWA v2.1 — app.js
+   v2.1: year-n spec type (ครบปีที่ N นับจาก startDate)
    ============================================================ */
 
 // ── DB ────────────────────────────────────────────────────────
@@ -119,6 +118,13 @@ function getNextFromSpec(fromDate, spec) {
     let next = new Date(d); next.setDate(target);
     if (next <= d) next.setMonth(next.getMonth()+1, target);
     return next;
+  }
+  if (spec.type === 'year-n') {
+    // ครบปีที่ N นับจาก startDate → startDate + N ปี
+    // fromDate ในกรณีนี้คือ startDate เสมอ (ดู getAllNextDates)
+    const r = new Date(d);
+    r.setFullYear(r.getFullYear() + spec.value);
+    return r;
   }
   return addDays(d, 90);
 }
@@ -272,6 +278,7 @@ function specLabel(spec) {
     return `ครบ ${spec.value} วัน`;
   }
   if (spec.type === 'monthly-day') return `ทุกวันที่ ${spec.value} ของเดือน`;
+  if (spec.type === 'year-n')      return `ครบปีที่ ${spec.value}`;
   return '-';
 }
 
@@ -399,12 +406,13 @@ async function addTopicInline() {
 
 // ── Freq chip toggle ──────────────────────────────────────────
 function toggleFreqChip(el) {
-  const v = el.dataset.v;
   el.classList.toggle('sel');
   document.getElementById('f-custom-days-row').style.display =
     document.querySelector('.fchip[data-v="custom-days"].sel') ? 'block' : 'none';
   document.getElementById('f-monthly-day-row').style.display =
     document.querySelector('.fchip[data-v="monthly-day"].sel') ? 'block' : 'none';
+  document.getElementById('f-year-n-row').style.display =
+    document.querySelector('.fchip[data-v="year-n"].sel') ? 'block' : 'none';
 }
 
 // Collect selected freqs from add form
@@ -418,10 +426,17 @@ function collectFreqsFromForm() {
     } else if (v === 'monthly-day') {
       const day = parseInt(document.getElementById('f-monthly-day').value);
       if (day >= 1 && day <= 28) specs.push({ type:'monthly-day', value:day });
+    } else if (v === 'year-n') {
+      // รวบรวมทุกปีที่เลือกจาก checkboxes
+      document.querySelectorAll('.year-n-check:checked').forEach(cb => {
+        const yr = parseInt(cb.value);
+        if (yr >= 1) specs.push({ type:'year-n', value:yr });
+      });
     } else {
       specs.push({ type:'days', value:parseInt(v) });
     }
   });
+  // เรียง spec จากน้อยไปมาก (วันถัดไปที่เร็วที่สุดก่อน)
   return specs;
 }
 
@@ -817,6 +832,16 @@ async function openModal(id) {
   const hasMonthly = (item.freqs||[]).some(f=>f.type==='monthly-day');
   const monthlyVal = hasMonthly ? (item.freqs.find(f=>f.type==='monthly-day')||{}).value||'' : '';
   editFreqChips.push(`<div class="fchip${hasMonthly?' sel':''}" data-v="monthly-day" onclick="this.classList.toggle('sel');document.getElementById('e-monthly-row').style.display=this.classList.contains('sel')?'block':'none'">ทุกวันที่...</div>`);
+  const selectedYears = (item.freqs||[]).filter(f=>f.type==='year-n').map(f=>f.value);
+  const hasYearN = selectedYears.length > 0;
+  editFreqChips.push(`<div class="fchip${hasYearN?' sel':''}" data-v="year-n" onclick="this.classList.toggle('sel');document.getElementById('e-year-n-row').style.display=this.classList.contains('sel')?'block':'none'">ครบปีที่...</div>`);
+  // สร้าง checkboxes ปี 1-10 สำหรับ edit modal
+  const eYearCheckboxes = Array.from({length:10},(_,i)=>i+1).map(yr=>{
+    const chk = selectedYears.includes(yr) ? 'checked' : '';
+    return `<label style="display:inline-flex;align-items:center;gap:4px;margin:3px 6px 3px 0;font-size:13px;cursor:pointer">
+      <input type="checkbox" class="e-year-n-check" value="${yr}" ${chk} style="accent-color:var(--primary)"> ปีที่ ${yr}
+    </label>`;
+  }).join('');
 
   const ep = getEndDateProgress(item);
   const epBlock = ep ? (() => {
@@ -909,12 +934,18 @@ async function openModal(id) {
       <div style="font-size:13px;font-weight:600;margin:12px 0 8px">✅ Checklist</div>
       <div style="border:.5px solid var(--border);border-radius:var(--rs);padding:6px 12px;margin-bottom:14px">${checkHtml}</div>
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">📝 บันทึกผลการทดสอบ</div>
-      <div style="background:var(--surface2);border-radius:var(--rs);padding:8px 12px;margin-bottom:8px;font-size:12px;color:var(--text2)">
-        📅 วันที่บันทึก: <strong style="color:var(--text)">${fmtDate(today())}</strong> (วันนี้อัตโนมัติ)
+      <div class="g2" style="margin-bottom:8px">
+        <div>
+          <label class="fl">วันที่ทดสอบจริง</label>
+          <input class="fc" type="date" id="res-date" value="${new Date().toISOString().split('T')[0]}">
+        </div>
+        <div>
+          <label class="fl">ผลลัพธ์ที่ได้ (ไม่บังคับ)</label>
+          <input class="fc" type="text" id="res-val" placeholder="เช่น ΔE=1.2, HRC=48" value="${item.lastResult||''}">
+        </div>
       </div>
-      <input class="fc" type="text" id="res-val" placeholder="ระบุผลลัพธ์ที่ได้ (ไม่บังคับ)" value="${item.lastResult||''}" style="margin-bottom:8px">
       <div class="brow">
-        <button class="btn btn-p" onclick="completeTest('${id}')">✅ บันทึกผลวันนี้</button>
+        <button class="btn btn-p" onclick="completeTest('${id}')">✅ บันทึกผล</button>
         <button class="btn btn-d" onclick="deleteItem('${id}')">ลบชิ้นงาน</button>
       </div>`}
     </div>
@@ -932,6 +963,10 @@ async function openModal(id) {
         </div>
         <div id="e-monthly-row" style="display:${hasMonthly?'block':'none'};margin-top:8px">
           <input class="fc" type="number" id="e-monthly-day" value="${monthlyVal}" placeholder="วันที่ (1-28)" min="1" max="28">
+        </div>
+        <div id="e-year-n-row" style="display:${hasYearN?'block':'none'};margin-top:8px;background:var(--surface2);border-radius:var(--rs);padding:10px 12px">
+          <div class="fl" style="margin-bottom:6px">เลือกปีที่ต้องการทดสอบ (นับจากวันเริ่มต้น)</div>
+          ${eYearCheckboxes}
         </div>
       </div>
       <div class="g2">
@@ -1069,9 +1104,11 @@ async function toggleCheck(id, idx, val) {
 }
 
 async function completeTest(id) {
-  const rv = document.getElementById('res-val').value.trim();
-  // ✅ ใช้วันปัจจุบันอัตโนมัติ ไม่ต้องกรอกวันย้อนหลัง
-  const recordDate = today();
+  const rv      = document.getElementById('res-val').value.trim();
+  const rdInput = document.getElementById('res-date').value;
+  if (!rdInput) { showToast('⚠️ กรุณาระบุวันที่ทดสอบ'); return; }
+  const recordDate = new Date(rdInput);
+  recordDate.setHours(0,0,0,0);
   const item = await dbGet('items', id);
   if (!item.history) item.history = [];
   item.history.push({
@@ -1132,6 +1169,11 @@ async function saveEdit(id) {
     } else if (v==='monthly-day') {
       const day = parseInt(document.getElementById('e-monthly-day')?.value);
       if (day>=1&&day<=28) eFreqs.push({type:'monthly-day',value:day});
+    } else if (v==='year-n') {
+      document.querySelectorAll('.e-year-n-check:checked').forEach(cb=>{
+        const yr = parseInt(cb.value);
+        if (yr>=1) eFreqs.push({type:'year-n',value:yr});
+      });
     } else {
       eFreqs.push({type:'days',value:parseInt(v)});
     }

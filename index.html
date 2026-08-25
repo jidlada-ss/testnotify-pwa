@@ -297,12 +297,28 @@
           <div class="fchip" data-v="365" onclick="toggleFreqChip(this)">ครบ 1 ปี</div>
           <div class="fchip" data-v="custom-days" onclick="toggleFreqChip(this)">กำหนดวัน</div>
           <div class="fchip" data-v="monthly-day" onclick="toggleFreqChip(this)">ทุกวันที่...</div>
+          <div class="fchip" data-v="year-n" onclick="toggleFreqChip(this)">ครบปีที่...</div>
         </div>
         <div id="f-custom-days-row" style="display:none;margin-top:8px">
           <input class="fc" type="number" id="f-custom-days" placeholder="จำนวนวัน (เช่น 45)" min="1">
         </div>
         <div id="f-monthly-day-row" style="display:none;margin-top:8px">
           <input class="fc" type="number" id="f-monthly-day" placeholder="วันที่ของเดือน (1-28)" min="1" max="28">
+        </div>
+        <div id="f-year-n-row" style="display:none;margin-top:8px;background:var(--surface2);border-radius:var(--rs);padding:10px 12px">
+          <div class="fl" style="margin-bottom:6px">เลือกปีที่ต้องการทดสอบ (นับจากวันเริ่มต้น)</div>
+          <div id="f-year-n-checks" style="display:flex;flex-wrap:wrap;gap:2px">
+            <label style="display:inline-flex;align-items:center;gap:4px;margin:3px 6px 3px 0;font-size:13px;cursor:pointer"><input type="checkbox" class="year-n-check" value="1" style="accent-color:var(--primary)"> ปีที่ 1</label>
+            <label style="display:inline-flex;align-items:center;gap:4px;margin:3px 6px 3px 0;font-size:13px;cursor:pointer"><input type="checkbox" class="year-n-check" value="2" style="accent-color:var(--primary)"> ปีที่ 2</label>
+            <label style="display:inline-flex;align-items:center;gap:4px;margin:3px 6px 3px 0;font-size:13px;cursor:pointer"><input type="checkbox" class="year-n-check" value="3" style="accent-color:var(--primary)"> ปีที่ 3</label>
+            <label style="display:inline-flex;align-items:center;gap:4px;margin:3px 6px 3px 0;font-size:13px;cursor:pointer"><input type="checkbox" class="year-n-check" value="4" style="accent-color:var(--primary)"> ปีที่ 4</label>
+            <label style="display:inline-flex;align-items:center;gap:4px;margin:3px 6px 3px 0;font-size:13px;cursor:pointer"><input type="checkbox" class="year-n-check" value="5" style="accent-color:var(--primary)"> ปีที่ 5</label>
+            <label style="display:inline-flex;align-items:center;gap:4px;margin:3px 6px 3px 0;font-size:13px;cursor:pointer"><input type="checkbox" class="year-n-check" value="6" style="accent-color:var(--primary)"> ปีที่ 6</label>
+            <label style="display:inline-flex;align-items:center;gap:4px;margin:3px 6px 3px 0;font-size:13px;cursor:pointer"><input type="checkbox" class="year-n-check" value="7" style="accent-color:var(--primary)"> ปีที่ 7</label>
+            <label style="display:inline-flex;align-items:center;gap:4px;margin:3px 6px 3px 0;font-size:13px;cursor:pointer"><input type="checkbox" class="year-n-check" value="8" style="accent-color:var(--primary)"> ปีที่ 8</label>
+            <label style="display:inline-flex;align-items:center;gap:4px;margin:3px 6px 3px 0;font-size:13px;cursor:pointer"><input type="checkbox" class="year-n-check" value="9" style="accent-color:var(--primary)"> ปีที่ 9</label>
+            <label style="display:inline-flex;align-items:center;gap:4px;margin:3px 6px 3px 0;font-size:13px;cursor:pointer"><input type="checkbox" class="year-n-check" value="10" style="accent-color:var(--primary)"> ปีที่ 10</label>
+          </div>
         </div>
       </div>
 
@@ -373,7 +389,7 @@
     </div>
     <div class="sec">ข้อมูล</div>
     <div class="card card-s">
-      <div class="tr"><span style="font-size:13px">เวอร์ชั่น</span><span style="font-size:13px;color:var(--text2)">1.9.0</span></div>
+      <div class="tr"><span style="font-size:13px">เวอร์ชั่น</span><span style="font-size:13px;color:var(--text2)">2.1.0</span></div>
       <div class="tr"><span style="font-size:13px">จัดเก็บข้อมูล</span><span style="font-size:13px;color:var(--text2)">IndexedDB</span></div>
       <div style="margin-top:12px"><button class="btn btn-d" style="font-size:13px" onclick="clearAllData()">🗑 ลบข้อมูลทั้งหมด</button></div>
     </div>
