@@ -1,5 +1,5 @@
 /* ============================================================
-   TestNotify PWA v2.4 — app.js
+   TestNotify PWA v2.5 — app.js
    v2.4: unified schedule list — no duplication, history+pending sorted by date
          history rows match actual freqs only, no ghost records
    ============================================================ */
@@ -285,37 +285,43 @@ function freqsLabel(item) {
   return item.freqs.map(specLabel).join(' → ');
 }
 
-// แสดงกำหนดการทั้งหมด — unified list เรียงตามเวลา ไม่ซ้ำซ้อน
-// หลักการ: history (prune แล้ว) + currentFreqs (ยังรอ) รวมเป็น list เดียว
+// แสดงกำหนดการทั้งหมด — 1 freq = 1 แถวเสมอ ไม่ซ้ำ
+// currentFreqs = ยังรอ | history entries ที่มี specLabel = prune แล้ว
 function freqsScheduleHtml(item) {
-  const start       = getStartDate(item);
-  const history     = (item.history || []).slice().sort((a,b) => new Date(a.date) - new Date(b.date));
+  const start        = getStartDate(item);
+  const history      = (item.history || []).slice().sort((a,b)=>new Date(a.date)-new Date(b.date));
   const currentFreqs = item.freqs || [];
-
-  if (!currentFreqs.length && !history.length) return '';
 
   const rows = [];
 
-  // ส่วนที่บันทึกแล้ว (จาก history) — แสดง label ที่ prune ไป
-  history.forEach(h => {
-    const label = h.freqBefore || 'บันทึกผล';
-    rows.push({
-      order: new Date(h.date).getTime(),
-      html: `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:7px 0;border-bottom:.5px solid var(--border)">
-        <div>
-          <div style="font-size:12px;font-weight:500;color:var(--text3);text-decoration:line-through">${label}</div>
-          <div style="font-size:11px;color:var(--text3)">✅ บันทึก ${fmtDate(h.date)}${h.result ? ' · ' + h.result : ''}</div>
-        </div>
-      </div>`
-    });
+  // pending rows จาก currentFreqs
+  currentFreqs.forEach(spec => {
+    const due = skipToWorkday(getNextFromSpec(start, spec));
+    rows.push({ due, label: specLabel(spec), hist: null });
   });
 
-  // ส่วนที่ยังรอบันทึก (currentFreqs) — ไม่ซ้ำกับ history เพราะ prune แล้ว
-  currentFreqs
-    .map(spec => ({ spec, date: skipToWorkday(getNextFromSpec(start, spec)) }))
-    .sort((a, b) => a.date - b.date)
-    .forEach(({ spec, date }) => {
-      const d = diffDays(date, today());
+  // done rows จาก history (specLabel บันทึกไว้ต่อ spec)
+  history.forEach(h => {
+    const lbl = h.specLabel || h.freqBefore || 'บันทึกผล';
+    const due = h.specDue ? new Date(h.specDue) : new Date(h.date);
+    rows.push({ due, label: lbl, hist: h });
+  });
+
+  if (!rows.length) return '';
+
+  rows.sort((a,b) => a.due - b.due);
+
+  const html = rows.map(row => {
+    if (row.hist) {
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:.5px solid var(--border)">
+        <div>
+          <div style="font-size:12px;font-weight:500;color:var(--text3);text-decoration:line-through">${row.label}</div>
+          ${row.hist.result ? `<div style="font-size:10px;color:var(--text3)">${row.hist.result}</div>` : ''}
+        </div>
+        <span style="font-size:11px;color:var(--text3);text-align:right;white-space:nowrap">✅ ${fmtDate(row.hist.date)}</span>
+      </div>`;
+    } else {
+      const d = diffDays(row.due, today());
       let cls, tag;
       if (d < 0) {
         cls = 'color:var(--danger);font-weight:500';
@@ -330,25 +336,15 @@ function freqsScheduleHtml(item) {
         cls = 'color:var(--text2)';
         tag = `🟢 อีก ${d} วัน`;
       }
-      rows.push({
-        order: date.getTime(),
-        html: `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:.5px solid var(--border);${cls}">
-          <span style="font-weight:500">${specLabel(spec)}</span>
-          <span style="font-size:11px;text-align:right">${fmtDate(date)}<br>${tag}</span>
-        </div>`
-      });
-    });
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:.5px solid var(--border);${cls}">
+        <span style="font-weight:500">${row.label}</span>
+        <span style="font-size:11px;text-align:right;white-space:nowrap">${fmtDate(row.due)}<br>${tag}</span>
+      </div>`;
+    }
+  }).join('');
 
-  if (!rows.length) return '';
-
-  // เรียงตาม due date (เก่า→ใหม่)
-  rows.sort((a, b) => a.order - b.order);
-
-  return `<div style="border:.5px solid var(--border);border-radius:var(--rs);padding:4px 12px;margin-top:6px;font-size:12px">
-    ${rows.map(r => r.html).join('')}
-  </div>`;
+  return `<div style="border:.5px solid var(--border);border-radius:var(--rs);padding:4px 12px;margin-top:6px;font-size:12px">${html}</div>`;
 }
-
 // ── Test topics ───────────────────────────────────────────────
 const DEFAULT_TOPICS = [
   'วัดสีชิ้นงาน (Color Measurement)',
@@ -1130,25 +1126,40 @@ async function completeTest(id) {
   const item = await dbGet('items', id);
   if (!item.history) item.history = [];
 
-  // หา freqs ที่จะถูก prune (ผ่านไปแล้ว และนี่คือการบันทึกครั้งนี้)
   const start = getStartDate(item);
-  const freqsBeingRecorded = (item.freqs || []).filter(spec => {
-    const due = skipToWorkday(getNextFromSpec(start, spec));
-    return due <= recordDate; // freq ที่ due ≤ วันที่บันทึก = freq ที่กำลังบันทึกครั้งนี้
-  }).map(s => specLabel(s));
 
-  item.history.push({
-    date:       recordDate.toISOString(),
-    result:     rv,
-    freqBefore: freqsBeingRecorded.join(', ') || freqsLabel(item)
+  // หา freqs ที่ due ≤ recordDate → บันทึก 1 entry ต่อ 1 spec
+  const specsToPrune = (item.freqs || []).filter(spec => {
+    const due = skipToWorkday(getNextFromSpec(start, spec));
+    return due <= recordDate;
   });
-  // อัปเดต last แต่ไม่เปลี่ยน startDate
+
+  if (specsToPrune.length === 0) {
+    // ไม่มี freq ที่ถึงกำหนด — บันทึก 1 entry แบบ generic
+    item.history.push({
+      date:      recordDate.toISOString(),
+      result:    rv,
+      specLabel: null,
+      specDue:   null,
+    });
+  } else {
+    // บันทึก 1 entry ต่อ spec ที่ due ≤ recordDate
+    specsToPrune.forEach(spec => {
+      const due = skipToWorkday(getNextFromSpec(start, spec));
+      item.history.push({
+        date:      recordDate.toISOString(),
+        result:    rv,
+        specLabel: specLabel(spec),   // label ของ freq นี้เท่านั้น
+        specDue:   due.toISOString(), // due date จริงของ freq นี้
+      });
+    });
+  }
+
   item.last       = recordDate.toISOString();
   item.lastResult = rv;
   item.checkDone  = [];
-  // ตัด freq ที่ผ่านไปและบันทึกแล้วออก (โดยใช้ recordDate แทน today())
+  // ตัด freq ที่ due ≤ recordDate ออก
   prunePassedFreqsAt(item, recordDate);
-  // Apply plan adj if active
   if (item.planAdj && recordDate >= new Date(item.planAdj.fromDate)) {
     item.freqs   = [item.planAdj.spec];
     item.planAdj = null;
