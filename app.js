@@ -1,7 +1,7 @@
 /* ============================================================
-   TestNotify PWA v2.2 — app.js
-   v2.2: schedule table — overdue always shows "รอบันทึก",
-         only shows "บันทึกแล้ว" after actual completeTest (prune)
+   TestNotify PWA v2.3 — app.js
+   v2.3: schedule table shows only relevant freqs,
+         history rows match actual freqs only, no ghost records
    ============================================================ */
 
 // ── DB ────────────────────────────────────────────────────────
@@ -225,24 +225,21 @@ function getBadge(item) {
   return `<span class="badge bo">อีก ${d} วัน</span>`;
 }
 
-// Prune freqs ที่ผ่านไปแล้ว **และ** มี history รองรับแล้วเท่านั้น
-// (ไม่ตัดถ้ายังไม่บันทึกผล แม้วันจะผ่านไปแล้ว)
-function prunePassedFreqs(item) {
+// Prune freqs ที่ due ≤ recordDate (วันที่บันทึกจริง)
+function prunePassedFreqsAt(item, recordDate) {
   if (!item.freqs || item.freqs.length <= 1) return item;
-  const start   = getStartDate(item);
-  const history = item.history || [];
-
+  const start = getStartDate(item);
   const remaining = item.freqs.filter(spec => {
     const due = skipToWorkday(getNextFromSpec(start, spec));
-    const isPast      = due <= today();
-    const hasRecord   = history.some(h => new Date(h.date) >= due);
-    // ตัดออกเฉพาะ: ผ่านไปแล้ว AND มีการบันทึกผลแล้ว
-    if (isPast && hasRecord) return false;
-    return true;
+    return due > recordDate; // เก็บเฉพาะ freq ที่ due หลังวันที่บันทึก
   });
-
   item.freqs = remaining.length ? remaining : [item.freqs[item.freqs.length - 1]];
   return item;
+}
+
+// Prune freqs ที่ผ่าน startDate + value ไปแล้ว **และ** มี history รองรับแล้วเท่านั้น
+function prunePassedFreqs(item) {
+  return prunePassedFreqsAt(item, today());
 }
 
 // End-date progress (นับจาก startDate)
@@ -288,22 +285,44 @@ function freqsLabel(item) {
   return item.freqs.map(specLabel).join(' → ');
 }
 
-// แสดงกำหนดการทั้งหมด (นับจาก startDate) พร้อมสถานะที่ถูกต้อง
+// แสดงกำหนดการทั้งหมด (นับจาก startDate)
+// — แสดงทุก freq ที่ตั้งค่าไว้ (ทั้งที่เหลือและที่บันทึกแล้ว/prune แล้ว)
+// — ไม่แสดง history ที่ไม่ match กับ freq ใดเลย
 function freqsScheduleHtml(item) {
-  if (!item.freqs || !item.freqs.length) return '';
-  const start   = getStartDate(item);
-  const history = item.history || [];
+  const start    = getStartDate(item);
+  const history  = item.history || [];
 
-  // สร้างรายการกำหนดการทั้งหมด รวม freq ที่ถูก prune แล้ว (จาก history)
-  // ใช้ item.freqs (ที่เหลืออยู่) แสดงตามปกติ
-  const lines = item.freqs.map(spec => {
+  // รวม freqs ปัจจุบัน (ยังรอบันทึก)
+  const currentFreqs = item.freqs || [];
+
+  // หา freqs ที่ถูก prune แล้ว (อยู่ใน history.freqBefore แต่ไม่ใช่ใน currentFreqs)
+  // วิธีที่ง่ายกว่า: คำนวณ due date ของทุก currentFreqs แล้วจับคู่ history กับ freq ที่ใกล้ที่สุด
+  // สร้างรายการรวม: freq ปัจจุบัน + history ที่ match กับ freq เดิม
+
+  // Map history แต่ละรายการไปหา freq spec ที่น่าจะ match (due date ใกล้เคียง ±30 วัน)
+  // แนวทางง่ายกว่า: แสดงเฉพาะ currentFreqs และ history ที่ freqBefore ตรงกับ specLabel ของ freq ใดๆ
+
+  // สร้าง set ของ specLabel ที่มีอยู่จริง (ทั้งปัจจุบันและเดิม)
+  const allKnownLabels = new Set([
+    ...currentFreqs.map(s => specLabel(s)),
+  ]);
+
+  // กรอง history เฉพาะที่ freqBefore มี label ใดๆ ที่ตรงกับ currentFreqs
+  // หรือถ้า freqBefore ไม่มีข้อมูล ไม่แสดง
+  const matchedHistory = history.filter(h => {
+    if (!h.freqBefore) return false;
+    // h.freqBefore อาจเป็น "ครบ 1 เดือน → ครบ 3 เดือน → ..." หรือ label เดี่ยว
+    return currentFreqs.some(s => h.freqBefore.includes(specLabel(s)));
+  });
+
+  // แสดง freq ที่ยังรออยู่
+  const pendingLines = currentFreqs.map(spec => {
     const raw  = getNextFromSpec(start, spec);
     const date = skipToWorkday(raw);
     const d    = diffDays(date, today());
 
     let cls, tag;
     if (d < 0) {
-      // ผ่านวันกำหนดแล้ว — แสดงเป็น "รอบันทึก" เสมอ จนกว่าจะบันทึกจริง
       cls = 'color:var(--danger);font-weight:500';
       tag = `🔴 เกิน ${Math.abs(d)} วัน — รอบันทึก`;
     } else if (d === 0) {
@@ -323,20 +342,27 @@ function freqsScheduleHtml(item) {
     </div>`;
   }).join('');
 
-  // แสดงประวัติที่บันทึกจริงๆ แล้ว (เรียงจากใหม่ไปเก่า)
-  const doneLines = history.length ? [...history].reverse().slice(0, 5).map(h => {
-    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:.5px solid var(--border);color:var(--text3);text-decoration:line-through">
-      <span style="font-weight:500">บันทึกแล้ว</span>
-      <span style="font-size:11px;text-align:right">${fmtDate(h.date)}<br>✅ ${h.result||'ไม่ระบุผล'}</span>
-    </div>`;
-  }).join('') : '';
-
-  const moreHistory = history.length > 5
-    ? `<div style="font-size:11px;color:var(--text3);text-align:center;padding:4px 0">+ ${history.length - 5} รายการก่อนหน้า (ดูที่แท็บประวัติ)</div>`
+  // แสดงเฉพาะ history ที่ match กับ freq ที่กำหนด (เรียงใหม่→เก่า)
+  const doneLines = matchedHistory.length
+    ? [...matchedHistory].reverse().slice(0, 5).map(h => {
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:.5px solid var(--border);color:var(--text3)">
+          <div>
+            <div style="font-weight:500;text-decoration:line-through">✅ บันทึกแล้ว</div>
+            <div style="font-size:10px;color:var(--text3)">${h.result||'ไม่ระบุผล'}</div>
+          </div>
+          <span style="font-size:11px;text-align:right">${fmtDate(h.date)}</span>
+        </div>`;
+      }).join('')
     : '';
 
+  const moreHistory = matchedHistory.length > 5
+    ? `<div style="font-size:11px;color:var(--text3);text-align:center;padding:4px 0">+ ${matchedHistory.length - 5} รายการก่อนหน้า (ดูที่แท็บประวัติ)</div>`
+    : '';
+
+  if (!pendingLines && !doneLines) return '';
+
   return `<div style="border:.5px solid var(--border);border-radius:var(--rs);padding:4px 12px;margin-top:6px;font-size:12px">
-    ${lines}${doneLines}${moreHistory}
+    ${pendingLines}${doneLines}${moreHistory}
   </div>`;
 }
 
@@ -1120,19 +1146,27 @@ async function completeTest(id) {
   recordDate.setHours(0,0,0,0);
   const item = await dbGet('items', id);
   if (!item.history) item.history = [];
+
+  // หา freqs ที่จะถูก prune (ผ่านไปแล้ว และนี่คือการบันทึกครั้งนี้)
+  const start = getStartDate(item);
+  const freqsBeingRecorded = (item.freqs || []).filter(spec => {
+    const due = skipToWorkday(getNextFromSpec(start, spec));
+    return due <= recordDate; // freq ที่ due ≤ วันที่บันทึก = freq ที่กำลังบันทึกครั้งนี้
+  }).map(s => specLabel(s));
+
   item.history.push({
-    date:      recordDate.toISOString(),
-    result:    rv,
-    freqBefore: freqsLabel(item)
+    date:       recordDate.toISOString(),
+    result:     rv,
+    freqBefore: freqsBeingRecorded.join(', ') || freqsLabel(item)
   });
-  // อัปเดต last = วันนี้ แต่ไม่เปลี่ยน startDate
+  // อัปเดต last แต่ไม่เปลี่ยน startDate
   item.last       = recordDate.toISOString();
   item.lastResult = rv;
   item.checkDone  = [];
-  // ตัด freq ที่ผ่านไปและบันทึกแล้วออก
-  prunePassedFreqs(item);
+  // ตัด freq ที่ผ่านไปและบันทึกแล้วออก (โดยใช้ recordDate แทน today())
+  prunePassedFreqsAt(item, recordDate);
   // Apply plan adj if active
-  if (item.planAdj && today() >= new Date(item.planAdj.fromDate)) {
+  if (item.planAdj && recordDate >= new Date(item.planAdj.fromDate)) {
     item.freqs   = [item.planAdj.spec];
     item.planAdj = null;
   }
