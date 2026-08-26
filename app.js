@@ -1,6 +1,7 @@
 /* ============================================================
-   TestNotify PWA v2.1 — app.js
-   v2.1: year-n spec type (ครบปีที่ N นับจาก startDate)
+   TestNotify PWA v2.2 — app.js
+   v2.2: schedule table — overdue always shows "รอบันทึก",
+         only shows "บันทึกแล้ว" after actual completeTest (prune)
    ============================================================ */
 
 // ── DB ────────────────────────────────────────────────────────
@@ -290,30 +291,24 @@ function freqsLabel(item) {
 // แสดงกำหนดการทั้งหมด (นับจาก startDate) พร้อมสถานะที่ถูกต้อง
 function freqsScheduleHtml(item) {
   if (!item.freqs || !item.freqs.length) return '';
-  const start = getStartDate(item);
+  const start   = getStartDate(item);
   const history = item.history || [];
 
+  // สร้างรายการกำหนดการทั้งหมด รวม freq ที่ถูก prune แล้ว (จาก history)
+  // ใช้ item.freqs (ที่เหลืออยู่) แสดงตามปกติ
   const lines = item.freqs.map(spec => {
     const raw  = getNextFromSpec(start, spec);
     const date = skipToWorkday(raw);
     const d    = diffDays(date, today());
 
-    // ตรวจว่ามีการบันทึกผลที่วันนั้นหรือหลังจากนั้นแล้วหรือยัง
-    const hasRecord = history.some(h => new Date(h.date) >= date);
-    const isPastUnrecorded = d < 0 && !hasRecord;  // ผ่านแล้ว แต่ยังไม่บันทึก
-    const isPastRecorded   = d < 0 && hasRecord;   // ผ่านแล้ว และบันทึกแล้ว
-
     let cls, tag;
-    if (isPastRecorded) {
-      cls = 'color:var(--text3);text-decoration:line-through';
-      tag = '✅ บันทึกแล้ว';
-    } else if (isPastUnrecorded) {
-      // ผ่านแล้วแต่ยังไม่บันทึก → แดง ไม่ขีดฆ่า
+    if (d < 0) {
+      // ผ่านวันกำหนดแล้ว — แสดงเป็น "รอบันทึก" เสมอ จนกว่าจะบันทึกจริง
       cls = 'color:var(--danger);font-weight:500';
       tag = `🔴 เกิน ${Math.abs(d)} วัน — รอบันทึก`;
     } else if (d === 0) {
       cls = 'color:var(--danger);font-weight:500';
-      tag = '🔴 วันนี้';
+      tag = '🔴 ถึงกำหนดวันนี้';
     } else if (d <= 7) {
       cls = 'color:var(--warn);font-weight:500';
       tag = `🟡 อีก ${d} วัน`;
@@ -328,7 +323,21 @@ function freqsScheduleHtml(item) {
     </div>`;
   }).join('');
 
-  return `<div style="border:.5px solid var(--border);border-radius:var(--rs);padding:4px 12px;margin-top:6px;font-size:12px">${lines}</div>`;
+  // แสดงประวัติที่บันทึกจริงๆ แล้ว (เรียงจากใหม่ไปเก่า)
+  const doneLines = history.length ? [...history].reverse().slice(0, 5).map(h => {
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:.5px solid var(--border);color:var(--text3);text-decoration:line-through">
+      <span style="font-weight:500">บันทึกแล้ว</span>
+      <span style="font-size:11px;text-align:right">${fmtDate(h.date)}<br>✅ ${h.result||'ไม่ระบุผล'}</span>
+    </div>`;
+  }).join('') : '';
+
+  const moreHistory = history.length > 5
+    ? `<div style="font-size:11px;color:var(--text3);text-align:center;padding:4px 0">+ ${history.length - 5} รายการก่อนหน้า (ดูที่แท็บประวัติ)</div>`
+    : '';
+
+  return `<div style="border:.5px solid var(--border);border-radius:var(--rs);padding:4px 12px;margin-top:6px;font-size:12px">
+    ${lines}${doneLines}${moreHistory}
+  </div>`;
 }
 
 // ── Test topics ───────────────────────────────────────────────
