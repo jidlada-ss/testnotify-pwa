@@ -1,6 +1,6 @@
 /* ============================================================
-   TestNotify PWA v2.3 — app.js
-   v2.3: schedule table shows only relevant freqs,
+   TestNotify PWA v2.4 — app.js
+   v2.4: unified schedule list — no duplication, history+pending sorted by date
          history rows match actual freqs only, no ghost records
    ============================================================ */
 
@@ -285,84 +285,67 @@ function freqsLabel(item) {
   return item.freqs.map(specLabel).join(' → ');
 }
 
-// แสดงกำหนดการทั้งหมด (นับจาก startDate)
-// — แสดงทุก freq ที่ตั้งค่าไว้ (ทั้งที่เหลือและที่บันทึกแล้ว/prune แล้ว)
-// — ไม่แสดง history ที่ไม่ match กับ freq ใดเลย
+// แสดงกำหนดการทั้งหมด — unified list เรียงตามเวลา ไม่ซ้ำซ้อน
+// หลักการ: history (prune แล้ว) + currentFreqs (ยังรอ) รวมเป็น list เดียว
 function freqsScheduleHtml(item) {
-  const start    = getStartDate(item);
-  const history  = item.history || [];
-
-  // รวม freqs ปัจจุบัน (ยังรอบันทึก)
+  const start       = getStartDate(item);
+  const history     = (item.history || []).slice().sort((a,b) => new Date(a.date) - new Date(b.date));
   const currentFreqs = item.freqs || [];
 
-  // หา freqs ที่ถูก prune แล้ว (อยู่ใน history.freqBefore แต่ไม่ใช่ใน currentFreqs)
-  // วิธีที่ง่ายกว่า: คำนวณ due date ของทุก currentFreqs แล้วจับคู่ history กับ freq ที่ใกล้ที่สุด
-  // สร้างรายการรวม: freq ปัจจุบัน + history ที่ match กับ freq เดิม
+  if (!currentFreqs.length && !history.length) return '';
 
-  // Map history แต่ละรายการไปหา freq spec ที่น่าจะ match (due date ใกล้เคียง ±30 วัน)
-  // แนวทางง่ายกว่า: แสดงเฉพาะ currentFreqs และ history ที่ freqBefore ตรงกับ specLabel ของ freq ใดๆ
+  const rows = [];
 
-  // สร้าง set ของ specLabel ที่มีอยู่จริง (ทั้งปัจจุบันและเดิม)
-  const allKnownLabels = new Set([
-    ...currentFreqs.map(s => specLabel(s)),
-  ]);
-
-  // กรอง history เฉพาะที่ freqBefore มี label ใดๆ ที่ตรงกับ currentFreqs
-  // หรือถ้า freqBefore ไม่มีข้อมูล ไม่แสดง
-  const matchedHistory = history.filter(h => {
-    if (!h.freqBefore) return false;
-    // h.freqBefore อาจเป็น "ครบ 1 เดือน → ครบ 3 เดือน → ..." หรือ label เดี่ยว
-    return currentFreqs.some(s => h.freqBefore.includes(specLabel(s)));
+  // ส่วนที่บันทึกแล้ว (จาก history) — แสดง label ที่ prune ไป
+  history.forEach(h => {
+    const label = h.freqBefore || 'บันทึกผล';
+    rows.push({
+      order: new Date(h.date).getTime(),
+      html: `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:7px 0;border-bottom:.5px solid var(--border)">
+        <div>
+          <div style="font-size:12px;font-weight:500;color:var(--text3);text-decoration:line-through">${label}</div>
+          <div style="font-size:11px;color:var(--text3)">✅ บันทึก ${fmtDate(h.date)}${h.result ? ' · ' + h.result : ''}</div>
+        </div>
+      </div>`
+    });
   });
 
-  // แสดง freq ที่ยังรออยู่
-  const pendingLines = currentFreqs.map(spec => {
-    const raw  = getNextFromSpec(start, spec);
-    const date = skipToWorkday(raw);
-    const d    = diffDays(date, today());
+  // ส่วนที่ยังรอบันทึก (currentFreqs) — ไม่ซ้ำกับ history เพราะ prune แล้ว
+  currentFreqs
+    .map(spec => ({ spec, date: skipToWorkday(getNextFromSpec(start, spec)) }))
+    .sort((a, b) => a.date - b.date)
+    .forEach(({ spec, date }) => {
+      const d = diffDays(date, today());
+      let cls, tag;
+      if (d < 0) {
+        cls = 'color:var(--danger);font-weight:500';
+        tag = `🔴 เกิน ${Math.abs(d)} วัน — รอบันทึก`;
+      } else if (d === 0) {
+        cls = 'color:var(--danger);font-weight:500';
+        tag = '🔴 ถึงกำหนดวันนี้';
+      } else if (d <= 7) {
+        cls = 'color:var(--warn);font-weight:500';
+        tag = `🟡 อีก ${d} วัน`;
+      } else {
+        cls = 'color:var(--text2)';
+        tag = `🟢 อีก ${d} วัน`;
+      }
+      rows.push({
+        order: date.getTime(),
+        html: `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:.5px solid var(--border);${cls}">
+          <span style="font-weight:500">${specLabel(spec)}</span>
+          <span style="font-size:11px;text-align:right">${fmtDate(date)}<br>${tag}</span>
+        </div>`
+      });
+    });
 
-    let cls, tag;
-    if (d < 0) {
-      cls = 'color:var(--danger);font-weight:500';
-      tag = `🔴 เกิน ${Math.abs(d)} วัน — รอบันทึก`;
-    } else if (d === 0) {
-      cls = 'color:var(--danger);font-weight:500';
-      tag = '🔴 ถึงกำหนดวันนี้';
-    } else if (d <= 7) {
-      cls = 'color:var(--warn);font-weight:500';
-      tag = `🟡 อีก ${d} วัน`;
-    } else {
-      cls = 'color:var(--text2)';
-      tag = `🟢 อีก ${d} วัน`;
-    }
+  if (!rows.length) return '';
 
-    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:.5px solid var(--border);${cls}">
-      <span style="font-weight:500">${specLabel(spec)}</span>
-      <span style="font-size:11px;text-align:right">${fmtDate(date)}<br>${tag}</span>
-    </div>`;
-  }).join('');
-
-  // แสดงเฉพาะ history ที่ match กับ freq ที่กำหนด (เรียงใหม่→เก่า)
-  const doneLines = matchedHistory.length
-    ? [...matchedHistory].reverse().slice(0, 5).map(h => {
-        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:.5px solid var(--border);color:var(--text3)">
-          <div>
-            <div style="font-weight:500;text-decoration:line-through">✅ บันทึกแล้ว</div>
-            <div style="font-size:10px;color:var(--text3)">${h.result||'ไม่ระบุผล'}</div>
-          </div>
-          <span style="font-size:11px;text-align:right">${fmtDate(h.date)}</span>
-        </div>`;
-      }).join('')
-    : '';
-
-  const moreHistory = matchedHistory.length > 5
-    ? `<div style="font-size:11px;color:var(--text3);text-align:center;padding:4px 0">+ ${matchedHistory.length - 5} รายการก่อนหน้า (ดูที่แท็บประวัติ)</div>`
-    : '';
-
-  if (!pendingLines && !doneLines) return '';
+  // เรียงตาม due date (เก่า→ใหม่)
+  rows.sort((a, b) => a.order - b.order);
 
   return `<div style="border:.5px solid var(--border);border-radius:var(--rs);padding:4px 12px;margin-top:6px;font-size:12px">
-    ${pendingLines}${doneLines}${moreHistory}
+    ${rows.map(r => r.html).join('')}
   </div>`;
 }
 
