@@ -1,5 +1,5 @@
 /* ============================================================
-   TestNotify PWA v2.5 — app.js
+   TestNotify PWA v2.6 — app.js
    v2.4: unified schedule list — no duplication, history+pending sorted by date
          history rows match actual freqs only, no ghost records
    ============================================================ */
@@ -142,26 +142,32 @@ function getAllNextDates(item) {
 }
 
 // คืน freq ถัดไปที่ยัง "รอบันทึก"
-// - วนทุก freq ตามลำดับเวลา: ถ้า freq นั้นยังไม่มี history รองรับ → คืนทันที
-// - ถ้าบันทึกครบทุก freq แล้ว:
-//     • freqs หลายรายการ (one-time schedule) → คืน freq สุดท้าย (เพื่อแสดงวันปิด)
-//     • freq เดียว (repeating) → คำนวณ next จาก item.last
 function getNextEntry(item) {
   const all     = getAllNextDates(item);
   const history = item.history || [];
 
   for (const entry of all) {
-    const hasRecord = history.some(h => new Date(h.date) >= entry.date);
-    if (!hasRecord) return entry; // freq นี้ยังรอบันทึก → คืนทันที
+    // ตรวจ history ว่ามี entry ที่ specDue ตรงกับ freq นี้ หรือ date >= due
+    const hasRecord = history.some(h => {
+      if (h.specDue) {
+        // new format: จับคู่ด้วย specDue ตรงๆ
+        return isoDate(h.specDue) === isoDate(entry.date);
+      }
+      // old format fallback
+      return new Date(h.date) >= entry.date;
+    });
+    if (!hasRecord) return entry; // freq นี้ยังรอบันทึก
   }
 
-  // ครบทุก freq แล้ว
-  if (all.length > 1) {
-    // one-time multi-freq schedule → เสร็จแล้ว คืน freq สุดท้าย
-    return all[all.length - 1];
+  // ครบทุก freq แล้ว — ถ้า freqs ว่างหมด (prune ทั้งหมด)
+  if (!all.length || !item.freqs || item.freqs.length === 0) {
+    // ไม่มี freq เหลือ → ไม่มีกำหนดถัดไป
+    return null;
   }
 
-  // single repeating freq → คำนวณ next จาก last (วันทดสอบล่าสุด)
+  if (all.length > 1) return all[all.length - 1];
+
+  // single repeating freq → คำนวณ next จาก last
   const spec         = all[0].spec;
   const nextFromLast = skipToWorkday(getNextFromSpec(new Date(item.last), spec));
   return { spec, raw: getNextFromSpec(new Date(item.last), spec), date: nextFromLast };
@@ -169,12 +175,30 @@ function getNextEntry(item) {
 
 function getNext(item) {
   const e = getNextEntry(item);
-  return e ? e.date : addDays(today(), 999);
+  // ถ้าไม่มี freq เหลือ (ครบทุก freq แล้ว) คืน null
+  return e ? e.date : null;
 }
 
 function getActiveSpec(item) {
   const e = getNextEntry(item);
   return e ? e.spec : (item.freqs?.[0] || { type:'days', value:90 });
+}
+
+function getDays(item) {
+  if (isProjectDone(item)) return 999;
+  const next = getNext(item);
+  if (!next) return 999; // บันทึกครบแล้ว ไม่มีกำหนดถัดไป
+  return diffDays(next, today());
+}
+
+function getStatus(item) {
+  if (isProjectDone(item)) return 'done';
+  const next = getNext(item);
+  if (!next) return 'done'; // ครบทุก freq แล้ว = เสร็จ (ไม่ต้องมี endDate)
+  const d = diffDays(next, today());
+  if (d < 0)  return 'overdue';
+  if (d <= 7) return 'soon';
+  return 'ok';
 }
 
 // ตรวจว่าโครงการสิ้นสุดแล้วหรือยัง
@@ -203,22 +227,9 @@ function isProjectDone(item) {
   return allRecorded;
 }
 
-function getDays(item) {
-  if (isProjectDone(item)) return 999; // stop showing as upcoming
-  return diffDays(getNext(item), today());
-}
-
-function getStatus(item) {
-  if (isProjectDone(item)) return 'done';
-  const d = getDays(item);
-  if (d < 0)  return 'overdue';
-  if (d <= 7) return 'soon';
-  return 'ok';
-}
-
 function getBadge(item) {
   const s = getStatus(item);
-  if (s === 'done')    return `<span class="badge bo">✅ 100% เสร็จสิ้น</span>`;
+  if (s === 'done')    return `<span class="badge bo">✅ บันทึกครบแล้ว</span>`;
   const d = getDays(item);
   if (s === 'overdue') return `<span class="badge bd">เกิน ${Math.abs(d)} วัน</span>`;
   if (s === 'soon')    return `<span class="badge bw">อีก ${d} วัน</span>`;
@@ -226,14 +237,16 @@ function getBadge(item) {
 }
 
 // Prune freqs ที่ due ≤ recordDate (วันที่บันทึกจริง)
+// ไม่มี length guard — แม้ freq เดียวก็ต้องตัดได้เมื่อบันทึกแล้ว
 function prunePassedFreqsAt(item, recordDate) {
-  if (!item.freqs || item.freqs.length <= 1) return item;
+  if (!item.freqs || !item.freqs.length) return item;
   const start = getStartDate(item);
   const remaining = item.freqs.filter(spec => {
     const due = skipToWorkday(getNextFromSpec(start, spec));
     return due > recordDate; // เก็บเฉพาะ freq ที่ due หลังวันที่บันทึก
   });
-  item.freqs = remaining.length ? remaining : [item.freqs[item.freqs.length - 1]];
+  // ถ้าตัดหมด → item.freqs = [] (ไม่มีอะไรเหลือ = บันทึกครบแล้ว)
+  item.freqs = remaining;
   return item;
 }
 
@@ -532,7 +545,7 @@ function renderDashboard() {
     <div class="card" onclick="openModal('${item.id}')">
       <div class="row rb mt4"><span class="fw5" style="font-size:14px">${item.name}</span>${getBadge(item)}</div>
       <div class="tsm mt4">${item.id ? item.id+' · ':'' }${item.test}</div>
-      <div class="tsm mt4">กำหนดถัดไป: <strong>${fmtDate(getNext(item))}</strong></div>
+      <div class="tsm mt4">กำหนดถัดไป: <strong>${getNext(item) ? fmtDate(getNext(item)) : '—'}</strong></div>
     </div>`).join('');
 }
 
@@ -590,7 +603,7 @@ function renderSchedule() {
     }
 
     const startStr = item.startDate ? fmtDate(item.startDate) : fmtDate(item.last);
-    const nextStr  = done ? '—' : fmtDate(getNext(item));
+    const nextStr  = done ? '—' : getNext(item) ? fmtDate(getNext(item)) : '—';
 
     return `<div class="card" onclick="openModal('${item.id}')">
       <div class="row rb"><span class="fw5" style="font-size:14px">${item.name}</span><div class="row">${adjBadge}${getBadge(item)}</div></div>
@@ -925,7 +938,7 @@ async function openModal(id) {
             <div class="tsm">กำหนดถัดไป</div>
             ${isProjectDone(item)
               ? `<div style="font-size:13px;font-weight:500;margin-top:2px;color:var(--ok)">— โครงการเสร็จสิ้น</div>`
-              : `<div style="font-size:13px;font-weight:500;margin-top:2px">${fmtDate(getNext(item))}</div>
+              : `<div style="font-size:13px;font-weight:500;margin-top:2px">${getNext(item) ? fmtDate(getNext(item)) : '—'}</div>
                  ${(()=>{ const raw=getNextFromSpec(getStartDate(item),getActiveSpec(item)); const sk=skipToWorkday(raw); return diffDays(sk,raw)>0?`<div style="font-size:10px;color:var(--warn);margin-top:1px">⟳ เลื่อนจากวันหยุด (${fmtDate(raw)})</div>`:'' })()}`
             }
           </div>
@@ -1170,7 +1183,7 @@ async function completeTest(id) {
     showToast('🎉 โครงการเสร็จสิ้น 100%! ไม่มีการแจ้งเตือนเพิ่มเติม');
   } else {
     const remaining = item.freqs ? item.freqs.length : 1;
-    showToast(`✅ บันทึกแล้ว ${fmtDate(recordDate)} · เหลือ ${remaining} ความถี่ · ถัดไป: ${fmtDate(getNext(item))}`);
+    showToast(`✅ บันทึกแล้ว ${fmtDate(recordDate)} · เหลือ ${remaining} ความถี่ · ถัดไป: ${getNext(item) ? fmtDate(getNext(item)) : '—'}`);
   }
   fireNotifications(false);
 }
@@ -1367,7 +1380,7 @@ function exportExcel() {
   const rows = items.map(item=>({
     'เลขที่':item.id,'ชื่อชิ้นงาน':item.name,'หัวข้อทดสอบ':item.test,
     'ความถี่':freqsLabel(item),'ทดสอบล่าสุด':fmtDate(item.last),
-    'กำหนดถัดไป':fmtDate(getNext(item)),'วันสิ้นสุด':item.endDate?fmtDate(item.endDate):'-',
+    'กำหนดถัดไป':getNext(item) ? fmtDate(getNext(item)) : '—','วันสิ้นสุด':item.endDate?fmtDate(item.endDate):'-',
     'คืบหน้า %':item.endDate?(getEndDateProgress(item)?.pct||0):'-',
     'ผลที่คาดหวัง':item.expected,'ผลล่าสุด':item.lastResult||'-',
     'สถานะ':getStatus(item)==='overdue'?`เกิน ${Math.abs(getDays(item))} วัน`:getStatus(item)==='soon'?`อีก ${getDays(item)} วัน`:'ปกติ',
@@ -1401,7 +1414,7 @@ function exportPDF() {
     const clr=s==='overdue'?'#A32D2D':s==='soon'?'#854F0B':'#3B6D11';
     const bg=s==='overdue'?'#FCEBEB':s==='soon'?'#FAEEDA':'#EAF3DE';
     const ep=getEndDateProgress(item);
-    return`<tr><td>${item.id}</td><td>${item.name}</td><td>${item.test}</td><td>${freqsLabel(item)}</td><td>${fmtDate(item.last)}</td><td>${fmtDate(getNext(item))}</td><td>${item.endDate?ep?.pct+'%':'-'}</td><td style="background:${bg};color:${clr};font-weight:600;text-align:center">${st}</td></tr>`;
+    return`<tr><td>${item.id}</td><td>${item.name}</td><td>${item.test}</td><td>${freqsLabel(item)}</td><td>${fmtDate(item.last)}</td><td>${getNext(item) ? fmtDate(getNext(item)) : '—'}</td><td>${item.endDate?ep?.pct+'%':'-'}</td><td style="background:${bg};color:${clr};font-weight:600;text-align:center">${st}</td></tr>`;
   }).join('');
   const html=`<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><title>TestNotify</title>
   <style>body{font-family:-apple-system,sans-serif;margin:32px;color:#1a1a2e}h1{font-size:20px;margin-bottom:4px}.sub{font-size:13px;color:#666;margin-bottom:20px}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#7F77DD;color:#fff;padding:8px;text-align:left}td{padding:7px 8px;border-bottom:1px solid #eee}tr:nth-child(even){background:#fafafa}@media print{body{margin:16px}}</style></head><body>
