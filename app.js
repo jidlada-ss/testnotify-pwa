@@ -1,5 +1,5 @@
 /* ============================================================
-   TestNotify PWA v2.6 — app.js
+   TestNotify PWA v2.7 — app.js
    v2.4: unified schedule list — no duplication, history+pending sorted by date
          history rows match actual freqs only, no ghost records
    ============================================================ */
@@ -147,27 +147,33 @@ function getNextEntry(item) {
   const history = item.history || [];
 
   for (const entry of all) {
-    // ตรวจ history ว่ามี entry ที่ specDue ตรงกับ freq นี้ หรือ date >= due
+    const thisLabel = specLabel(entry.spec);
     const hasRecord = history.some(h => {
+      // Format ใหม่: จับคู่ด้วย specDue ตรงๆ
       if (h.specDue) {
-        // new format: จับคู่ด้วย specDue ตรงๆ
         return isoDate(h.specDue) === isoDate(entry.date);
       }
-      // old format fallback
-      return new Date(h.date) >= entry.date;
+      // Format ใหม่: จับคู่ด้วย specLabel ตรงๆ
+      if (h.specLabel) {
+        return h.specLabel === thisLabel;
+      }
+      // Format เก่า (freqBefore): ตรวจว่า label นี้อยู่ใน freqBefore หรือไม่
+      // เช่น freqBefore = "ครบ 6 เดือน → ครบ 1 ปี" หรือ "ครบ 6 เดือน, ครบ 1 ปี"
+      if (h.freqBefore && h.freqBefore.includes(thisLabel)) {
+        return true;
+      }
+      // Fallback สุดท้าย: date >= due (±7 วัน เผื่อวันหยุดเลื่อน)
+      const diff = Math.abs(diffDays(new Date(h.date), entry.date));
+      return diff <= 7 && new Date(h.date) >= addDays(entry.date, -7);
     });
-    if (!hasRecord) return entry; // freq นี้ยังรอบันทึก
+    if (!hasRecord) return entry;
   }
 
-  // ครบทุก freq แล้ว — ถ้า freqs ว่างหมด (prune ทั้งหมด)
-  if (!all.length || !item.freqs || item.freqs.length === 0) {
-    // ไม่มี freq เหลือ → ไม่มีกำหนดถัดไป
-    return null;
-  }
-
+  // ครบทุก freq แล้ว
+  if (!all.length || !item.freqs || item.freqs.length === 0) return null;
   if (all.length > 1) return all[all.length - 1];
 
-  // single repeating freq → คำนวณ next จาก last
+  // single repeating freq → next จาก last
   const spec         = all[0].spec;
   const nextFromLast = skipToWorkday(getNextFromSpec(new Date(item.last), spec));
   return { spec, raw: getNextFromSpec(new Date(item.last), spec), date: nextFromLast };
@@ -474,7 +480,36 @@ let calRef  = new Date();
 
 async function loadItems() {
   items = await dbAll('items');
-  items.sort((a,b) => getDays(a)-getDays(b));
+  // Migration: สำหรับ data เก่าที่ freqs ยังไม่ถูก prune
+  // ตรวจทุก item ว่า freq ใดมี history match แล้ว → prune ออก
+  let migrated = false;
+  for (const item of items) {
+    if (!item.freqs || !item.freqs.length || !item.history || !item.history.length) continue;
+    const start = getStartDate(item);
+    const before = item.freqs.length;
+    item.freqs = item.freqs.filter(spec => {
+      const due       = skipToWorkday(getNextFromSpec(start, spec));
+      const thisLabel = specLabel(spec);
+      // ถ้า history มี entry ที่ match spec นี้ → ควรถูก prune แล้ว
+      const alreadyRecorded = item.history.some(h => {
+        if (h.specDue)   return isoDate(h.specDue) === isoDate(due);
+        if (h.specLabel) return h.specLabel === thisLabel;
+        if (h.freqBefore && h.freqBefore.includes(thisLabel)) return true;
+        // date ใกล้ due ±7 วัน
+        const diff = Math.abs(diffDays(new Date(h.date), due));
+        return diff <= 7 && new Date(h.date) >= addDays(due, -14);
+      });
+      return !alreadyRecorded; // เก็บเฉพาะที่ยังไม่ match
+    });
+    if (item.freqs.length !== before) {
+      await dbPut('items', item);
+      migrated = true;
+    }
+  }
+  items.sort((a,b) => {
+    const da = getDays(a), db = getDays(b);
+    return da - db;
+  });
 }
 async function saveItem(item) {
   await dbPut('items', item);
