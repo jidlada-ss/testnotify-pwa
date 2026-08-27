@@ -1,5 +1,5 @@
 /* ============================================================
-   TestNotify PWA v2.7 — app.js
+   TestNotify PWA v2.8 — app.js
    v2.4: unified schedule list — no duplication, history+pending sorted by date
          history rows match actual freqs only, no ghost records
    ============================================================ */
@@ -304,65 +304,152 @@ function freqsLabel(item) {
   return item.freqs.map(specLabel).join(' → ');
 }
 
-// แสดงกำหนดการทั้งหมด — 1 freq = 1 แถวเสมอ ไม่ซ้ำ
-// currentFreqs = ยังรอ | history entries ที่มี specLabel = prune แล้ว
+// แสดงกำหนดการทั้งหมด
+// แต่ละแถว: done=ขีดทับ | overdue=แดง กดได้ | future=เขียว กดไม่ได้
 function freqsScheduleHtml(item) {
   const start        = getStartDate(item);
-  const history      = (item.history || []).slice().sort((a,b)=>new Date(a.date)-new Date(b.date));
+  const history      = (item.history || []).slice().sort((a,b) => new Date(a.date)-new Date(b.date));
   const currentFreqs = item.freqs || [];
 
   const rows = [];
 
-  // pending rows จาก currentFreqs
-  currentFreqs.forEach(spec => {
-    const due = skipToWorkday(getNextFromSpec(start, spec));
-    rows.push({ due, label: specLabel(spec), hist: null });
-  });
-
-  // done rows จาก history (specLabel บันทึกไว้ต่อ spec)
+  // done rows จาก history (prune แล้ว — 1 history entry = 1 spec)
   history.forEach(h => {
     const lbl = h.specLabel || h.freqBefore || 'บันทึกผล';
     const due = h.specDue ? new Date(h.specDue) : new Date(h.date);
-    rows.push({ due, label: lbl, hist: h });
+    rows.push({ due, label: lbl, hist: h, pending: false });
+  });
+
+  // pending rows จาก currentFreqs
+  currentFreqs.forEach(spec => {
+    const due = skipToWorkday(getNextFromSpec(start, spec));
+    rows.push({ due, label: specLabel(spec), hist: null, spec, pending: true });
   });
 
   if (!rows.length) return '';
 
-  rows.sort((a,b) => a.due - b.due);
+  rows.sort((a, b) => a.due - b.due);
 
-  const html = rows.map(row => {
-    if (row.hist) {
-      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:.5px solid var(--border)">
+  const itemId = item.id;
+
+  const html = rows.map((row, idx) => {
+    if (!row.pending) {
+      // ✅ บันทึกแล้ว — ขีดทับ ไม่กดได้
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:.5px solid var(--border)">
         <div>
           <div style="font-size:12px;font-weight:500;color:var(--text3);text-decoration:line-through">${row.label}</div>
           ${row.hist.result ? `<div style="font-size:10px;color:var(--text3)">${row.hist.result}</div>` : ''}
         </div>
-        <span style="font-size:11px;color:var(--text3);text-align:right;white-space:nowrap">✅ ${fmtDate(row.hist.date)}</span>
+        <span style="font-size:11px;color:var(--text3);white-space:nowrap">✅ ${fmtDate(row.hist.date)}</span>
+      </div>`;
+    }
+
+    const d = diffDays(row.due, today());
+    const isOverdue = d < 0;
+    const isToday   = d === 0;
+    const canRecord = isOverdue || isToday;
+
+    if (canRecord) {
+      // 🔴 ถึงหรือเกินกำหนด — กดได้ เปิด mini form
+      const rowId = `freq-row-${itemId}-${idx}`;
+      const formId = `freq-form-${itemId}-${idx}`;
+      const tag = isToday ? '🔴 ถึงกำหนดวันนี้' : `🔴 เกิน ${Math.abs(d)} วัน`;
+      return `<div style="border-bottom:.5px solid var(--border)">
+        <div id="${rowId}" onclick="toggleFreqForm('${rowId}','${formId}')"
+          style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;cursor:pointer;user-select:none">
+          <span style="font-size:12px;font-weight:500;color:var(--danger)">${row.label}</span>
+          <span style="font-size:11px;color:var(--danger);text-align:right;white-space:nowrap">
+            ${fmtDate(row.due)}<br>${tag} <span style="font-size:10px">▼ กดบันทึก</span>
+          </span>
+        </div>
+        <div id="${formId}" style="display:none;background:var(--surface2);border-radius:var(--rs);padding:10px 12px;margin-bottom:8px">
+          <div style="font-size:12px;color:var(--text2);margin-bottom:8px">บันทึกผล: <strong>${row.label}</strong></div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <div style="flex:1"><div style="font-size:11px;color:var(--text2);margin-bottom:3px">วันที่ทดสอบจริง</div>
+              <input class="fc" type="date" id="frd-${itemId}-${idx}" value="${new Date().toISOString().split('T')[0]}" style="font-size:13px;padding:7px 10px"></div>
+            <div style="flex:1"><div style="font-size:11px;color:var(--text2);margin-bottom:3px">ผลลัพธ์ (ไม่บังคับ)</div>
+              <input class="fc" type="text" id="frv-${itemId}-${idx}" placeholder="เช่น ΔE=1.2" style="font-size:13px;padding:7px 10px"></div>
+          </div>
+          <button class="btn btn-p" style="width:100%;padding:8px" onclick="recordSingleFreq('${itemId}','${idx}')">✅ บันทึกผลนี้</button>
+        </div>
       </div>`;
     } else {
-      const d = diffDays(row.due, today());
-      let cls, tag;
-      if (d < 0) {
-        cls = 'color:var(--danger);font-weight:500';
-        tag = `🔴 เกิน ${Math.abs(d)} วัน — รอบันทึก`;
-      } else if (d === 0) {
-        cls = 'color:var(--danger);font-weight:500';
-        tag = '🔴 ถึงกำหนดวันนี้';
-      } else if (d <= 7) {
-        cls = 'color:var(--warn);font-weight:500';
-        tag = `🟡 อีก ${d} วัน`;
-      } else {
-        cls = 'color:var(--text2)';
-        tag = `🟢 อีก ${d} วัน`;
-      }
-      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:.5px solid var(--border);${cls}">
-        <span style="font-weight:500">${row.label}</span>
-        <span style="font-size:11px;text-align:right;white-space:nowrap">${fmtDate(row.due)}<br>${tag}</span>
+      // 🟢 ยังไม่ถึงกำหนด — ไม่กดได้
+      const tag = d <= 7 ? `🟡 อีก ${d} วัน` : `🟢 อีก ${d} วัน`;
+      const col = d <= 7 ? 'var(--warn)' : 'var(--ok)';
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:.5px solid var(--border)">
+        <span style="font-size:12px;font-weight:500;color:${col}">${row.label}</span>
+        <span style="font-size:11px;color:${col};text-align:right;white-space:nowrap">${fmtDate(row.due)}<br>${tag}</span>
       </div>`;
     }
   }).join('');
 
   return `<div style="border:.5px solid var(--border);border-radius:var(--rs);padding:4px 12px;margin-top:6px;font-size:12px">${html}</div>`;
+}
+
+function toggleFreqForm(rowId, formId) {
+  const form = document.getElementById(formId);
+  if (!form) return;
+  const isOpen = form.style.display !== 'none';
+  // ปิดทุก freq form ที่เปิดอยู่ก่อน
+  document.querySelectorAll('[id^="freq-form-"]').forEach(el => {
+    el.style.display = 'none';
+  });
+  if (!isOpen) form.style.display = 'block';
+}
+
+async function recordSingleFreq(itemId, rowIdx) {
+  const rdEl = document.getElementById(`frd-${itemId}-${rowIdx}`);
+  const rvEl = document.getElementById(`frv-${itemId}-${rowIdx}`);
+  if (!rdEl || !rdEl.value) { showToast('⚠️ กรุณาระบุวันที่ทดสอบ'); return; }
+
+  const recordDate = new Date(rdEl.value);
+  recordDate.setHours(0,0,0,0);
+  const rv   = rvEl ? rvEl.value.trim() : '';
+
+  const item = await dbGet('items', itemId);
+  if (!item) return;
+  if (!item.history) item.history = [];
+
+  const start = getStartDate(item);
+
+  // หา spec ที่ due ≤ recordDate จาก freqs ที่เหลือ
+  const specsToPrune = (item.freqs || []).filter(spec => {
+    const due = skipToWorkday(getNextFromSpec(start, spec));
+    return due <= recordDate;
+  });
+
+  if (!specsToPrune.length) {
+    showToast('⚠️ วันที่ระบุยังไม่ถึงกำหนดของ freq นี้');
+    return;
+  }
+
+  // บันทึก 1 history entry ต่อ spec
+  specsToPrune.forEach(spec => {
+    const due = skipToWorkday(getNextFromSpec(start, spec));
+    item.history.push({
+      date:      recordDate.toISOString(),
+      result:    rv,
+      specLabel: specLabel(spec),
+      specDue:   due.toISOString(),
+    });
+  });
+
+  item.last       = recordDate.toISOString();
+  item.lastResult = rv;
+  item.checkDone  = [];
+  prunePassedFreqsAt(item, recordDate);
+
+  await saveItem(item);
+  closeModal();
+  if (isProjectDone(item)) {
+    showToast('🎉 โครงการเสร็จสิ้น 100%!');
+  } else {
+    const remaining = item.freqs ? item.freqs.length : 0;
+    const nextDate  = getNext(item);
+    showToast(`✅ บันทึกแล้ว ${fmtDate(recordDate)}${nextDate ? ' · ถัดไป: '+fmtDate(nextDate) : ''}`);
+  }
+  fireNotifications(false);
 }
 // ── Test topics ───────────────────────────────────────────────
 const DEFAULT_TOPICS = [
@@ -995,19 +1082,10 @@ async function openModal(id) {
         </div>` : `
       <div style="font-size:13px;font-weight:600;margin:12px 0 8px">✅ Checklist</div>
       <div style="border:.5px solid var(--border);border-radius:var(--rs);padding:6px 12px;margin-bottom:14px">${checkHtml}</div>
-      <div style="font-size:13px;font-weight:600;margin-bottom:8px">📝 บันทึกผลการทดสอบ</div>
-      <div class="g2" style="margin-bottom:8px">
-        <div>
-          <label class="fl">วันที่ทดสอบจริง</label>
-          <input class="fc" type="date" id="res-date" value="${new Date().toISOString().split('T')[0]}">
-        </div>
-        <div>
-          <label class="fl">ผลลัพธ์ที่ได้ (ไม่บังคับ)</label>
-          <input class="fc" type="text" id="res-val" placeholder="เช่น ΔE=1.2, HRC=48" value="${item.lastResult||''}">
-        </div>
+      <div style="background:var(--surface2);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px;font-size:12px;color:var(--text2)">
+        💡 กดที่บรรทัดที่ขึ้นสีแดง (เกินกำหนด) ในตารางกำหนดการด้านบนเพื่อบันทึกผลแต่ละรายการ
       </div>
       <div class="brow">
-        <button class="btn btn-p" onclick="completeTest('${id}')">✅ บันทึกผล</button>
         <button class="btn btn-d" onclick="deleteItem('${id}')">ลบชิ้นงาน</button>
       </div>`}
     </div>
