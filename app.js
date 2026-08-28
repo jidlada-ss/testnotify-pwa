@@ -1,5 +1,5 @@
 /* ============================================================
-   TestNotify PWA v2.9 — app.js
+   TestNotify PWA v3.0 — app.js
    v2.4: unified schedule list — no duplication, history+pending sorted by date
          history rows match actual freqs only, no ghost records
    ============================================================ */
@@ -295,7 +295,7 @@ function specLabel(spec) {
     return `ครบ ${spec.value} วัน`;
   }
   if (spec.type === 'monthly-day') return `ทุกวันที่ ${spec.value} ของเดือน`;
-  if (spec.type === 'year-n')      return `ครบปีที่ ${spec.value}`;
+  if (spec.type === 'year-n')      return `ครบ ${spec.value} ปี`;
   return '-';
 }
 
@@ -1027,12 +1027,12 @@ async function openModal(id) {
   editFreqChips.push(`<div class="fchip${hasMonthly?' sel':''}" data-v="monthly-day" onclick="this.classList.toggle('sel');document.getElementById('e-monthly-row').style.display=this.classList.contains('sel')?'block':'none'">ทุกวันที่...</div>`);
   const selectedYears = (item.freqs||[]).filter(f=>f.type==='year-n').map(f=>f.value);
   const hasYearN = selectedYears.length > 0;
-  editFreqChips.push(`<div class="fchip${hasYearN?' sel':''}" data-v="year-n" onclick="this.classList.toggle('sel');document.getElementById('e-year-n-row').style.display=this.classList.contains('sel')?'block':'none'">ครบปีที่...</div>`);
-  // สร้าง checkboxes ปี 1-10 สำหรับ edit modal
-  const eYearCheckboxes = Array.from({length:10},(_,i)=>i+1).map(yr=>{
+  editFreqChips.push(`<div class="fchip${hasYearN?' sel':''}" data-v="year-n" onclick="this.classList.toggle('sel');document.getElementById('e-year-n-row').style.display=this.classList.contains('sel')?'block':'none'">ครบ N ปี...</div>`);
+  // สร้าง checkboxes ปี 2-5 สำหรับ edit modal
+  const eYearCheckboxes = [2,3,4,5].map(yr=>{
     const chk = selectedYears.includes(yr) ? 'checked' : '';
     return `<label style="display:inline-flex;align-items:center;gap:4px;margin:3px 6px 3px 0;font-size:13px;cursor:pointer">
-      <input type="checkbox" class="e-year-n-check" value="${yr}" ${chk} style="accent-color:var(--primary)"> ปีที่ ${yr}
+      <input type="checkbox" class="e-year-n-check" value="${yr}" ${chk} style="accent-color:var(--primary)"> ครบ ${yr} ปี
     </label>`;
   }).join('');
 
@@ -1124,8 +1124,6 @@ async function openModal(id) {
           <div style="font-size:13px;color:#3B6D11">โครงการนี้สิ้นสุดแล้ว ไม่มีการแจ้งเตือนเพิ่มเติม</div>
           <button class="btn btn-d btn-sm" style="margin-top:8px" onclick="deleteItem('${id}')">ลบชิ้นงาน</button>
         </div>` : `
-      <div style="font-size:13px;font-weight:600;margin:12px 0 8px">✅ Checklist</div>
-      <div style="border:.5px solid var(--border);border-radius:var(--rs);padding:6px 12px;margin-bottom:14px">${checkHtml}</div>
       <div style="background:var(--surface2);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px;font-size:12px;color:var(--text2)">
         💡 กดที่บรรทัดที่ขึ้นสีแดง (เกินกำหนด) ในตารางกำหนดการด้านบนเพื่อบันทึกผลแต่ละรายการ
       </div>
@@ -1149,7 +1147,7 @@ async function openModal(id) {
           <input class="fc" type="number" id="e-monthly-day" value="${monthlyVal}" placeholder="วันที่ (1-28)" min="1" max="28">
         </div>
         <div id="e-year-n-row" style="display:${hasYearN?'block':'none'};margin-top:8px;background:var(--surface2);border-radius:var(--rs);padding:10px 12px">
-          <div class="fl" style="margin-bottom:6px">เลือกปีที่ต้องการทดสอบ (นับจากวันเริ่มต้น)</div>
+          <div class="fl" style="margin-bottom:6px">เลือกจำนวนปีที่ต้องการทดสอบ (นับจากวันเริ่มต้น)</div>
           ${eYearCheckboxes}
         </div>
       </div>
