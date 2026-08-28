@@ -1,5 +1,5 @@
 /* ============================================================
-   TestNotify PWA v2.8 — app.js
+   TestNotify PWA v2.9 — app.js
    v2.4: unified schedule list — no duplication, history+pending sorted by date
          history rows match actual freqs only, no ghost records
    ============================================================ */
@@ -305,19 +305,21 @@ function freqsLabel(item) {
 }
 
 // แสดงกำหนดการทั้งหมด
-// แต่ละแถว: done=ขีดทับ | overdue=แดง กดได้ | future=เขียว กดไม่ได้
+// done=ขีดทับ | overdue=แดง กดบันทึกได้ | future=เขียว กดหยุดก่อนกำหนดได้
 function freqsScheduleHtml(item) {
   const start        = getStartDate(item);
   const history      = (item.history || []).slice().sort((a,b) => new Date(a.date)-new Date(b.date));
   const currentFreqs = item.freqs || [];
+  const checklist    = item.checklist || [];
 
   const rows = [];
 
-  // done rows จาก history (prune แล้ว — 1 history entry = 1 spec)
+  // done rows จาก history
   history.forEach(h => {
-    const lbl = h.specLabel || h.freqBefore || 'บันทึกผล';
-    const due = h.specDue ? new Date(h.specDue) : new Date(h.date);
-    rows.push({ due, label: lbl, hist: h, pending: false });
+    const lbl  = h.specLabel || h.freqBefore || 'บันทึกผล';
+    const due  = h.specDue ? new Date(h.specDue) : new Date(h.date);
+    const stopped = !!h.stopped;
+    rows.push({ due, label: lbl, hist: h, pending: false, stopped });
   });
 
   // pending rows จาก currentFreqs
@@ -327,85 +329,106 @@ function freqsScheduleHtml(item) {
   });
 
   if (!rows.length) return '';
-
   rows.sort((a, b) => a.due - b.due);
 
-  const itemId = item.id;
+  const itemId     = item.id;
+  const ckHtml     = checklist.map((c, ci) =>
+    `<label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;cursor:pointer">
+       <input type="checkbox" class="fck-${itemId}" value="${ci}" style="accent-color:var(--primary);width:15px;height:15px"> ${c}
+     </label>`).join('');
 
   const html = rows.map((row, idx) => {
+    const formId = `freq-form-${itemId}-${idx}`;
+    const today_str = new Date().toISOString().split('T')[0];
+
     if (!row.pending) {
-      // ✅ บันทึกแล้ว — ขีดทับ ไม่กดได้
-      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:.5px solid var(--border)">
+      // ✅ บันทึกแล้ว — ขีดทับ
+      const stopBadge = row.stopped
+        ? `<span style="font-size:10px;background:#FAEEDA;color:#854F0B;border-radius:8px;padding:1px 6px;margin-left:4px">หยุด</span>`
+        : '';
+      return `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:9px 0;border-bottom:.5px solid var(--border)">
         <div>
-          <div style="font-size:12px;font-weight:500;color:var(--text3);text-decoration:line-through">${row.label}</div>
+          <div style="font-size:12px;font-weight:500;color:var(--text3);text-decoration:line-through">${row.label}${stopBadge}</div>
           ${row.hist.result ? `<div style="font-size:10px;color:var(--text3)">${row.hist.result}</div>` : ''}
+          ${row.hist.stopReason ? `<div style="font-size:10px;color:var(--warn)">สาเหตุ: ${row.hist.stopReason}</div>` : ''}
         </div>
-        <span style="font-size:11px;color:var(--text3);white-space:nowrap">✅ ${fmtDate(row.hist.date)}</span>
+        <span style="font-size:11px;color:var(--text3);white-space:nowrap;padding-left:8px">✅ ${fmtDate(row.hist.date)}</span>
       </div>`;
     }
 
-    const d = diffDays(row.due, today());
+    // pending — คำนวณสถานะ
+    const d         = diffDays(row.due, today());
     const isOverdue = d < 0;
     const isToday   = d === 0;
-    const canRecord = isOverdue || isToday;
+    const isDue     = isOverdue || isToday;
+    const tag       = isOverdue ? `🔴 เกิน ${Math.abs(d)} วัน` : isToday ? '🔴 ถึงกำหนดวันนี้' : d <= 7 ? `🟡 อีก ${d} วัน` : `🟢 อีก ${d} วัน`;
+    const col       = isDue ? 'var(--danger)' : d <= 7 ? 'var(--warn)' : 'var(--ok)';
+    const arrow     = `▼ กดบันทึก`;
 
-    if (canRecord) {
-      // 🔴 ถึงหรือเกินกำหนด — กดได้ เปิด mini form
-      const rowId = `freq-row-${itemId}-${idx}`;
-      const formId = `freq-form-${itemId}-${idx}`;
-      const tag = isToday ? '🔴 ถึงกำหนดวันนี้' : `🔴 เกิน ${Math.abs(d)} วัน`;
-      return `<div style="border-bottom:.5px solid var(--border)">
-        <div id="${rowId}" onclick="toggleFreqForm('${rowId}','${formId}')"
-          style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;cursor:pointer;user-select:none">
-          <span style="font-size:12px;font-weight:500;color:var(--danger)">${row.label}</span>
-          <span style="font-size:11px;color:var(--danger);text-align:right;white-space:nowrap">
-            ${fmtDate(row.due)}<br>${tag} <span style="font-size:10px">▼ กดบันทึก</span>
-          </span>
-        </div>
-        <div id="${formId}" style="display:none;background:var(--surface2);border-radius:var(--rs);padding:10px 12px;margin-bottom:8px">
-          <div style="font-size:12px;color:var(--text2);margin-bottom:8px">บันทึกผล: <strong>${row.label}</strong></div>
-          <div style="display:flex;gap:8px;margin-bottom:8px">
-            <div style="flex:1"><div style="font-size:11px;color:var(--text2);margin-bottom:3px">วันที่ทดสอบจริง</div>
-              <input class="fc" type="date" id="frd-${itemId}-${idx}" value="${new Date().toISOString().split('T')[0]}" style="font-size:13px;padding:7px 10px"></div>
-            <div style="flex:1"><div style="font-size:11px;color:var(--text2);margin-bottom:3px">ผลลัพธ์ (ไม่บังคับ)</div>
-              <input class="fc" type="text" id="frv-${itemId}-${idx}" placeholder="เช่น ΔE=1.2" style="font-size:13px;padding:7px 10px"></div>
-          </div>
-          <button class="btn btn-p" style="width:100%;padding:8px" onclick="recordSingleFreq('${itemId}','${idx}')">✅ บันทึกผลนี้</button>
-        </div>
-      </div>`;
-    } else {
-      // 🟢 ยังไม่ถึงกำหนด — ไม่กดได้
-      const tag = d <= 7 ? `🟡 อีก ${d} วัน` : `🟢 อีก ${d} วัน`;
-      const col = d <= 7 ? 'var(--warn)' : 'var(--ok)';
-      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:.5px solid var(--border)">
+    return `<div style="border-bottom:.5px solid var(--border)">
+      <div onclick="toggleFreqForm('${formId}')"
+        style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;cursor:pointer;user-select:none">
         <span style="font-size:12px;font-weight:500;color:${col}">${row.label}</span>
-        <span style="font-size:11px;color:${col};text-align:right;white-space:nowrap">${fmtDate(row.due)}<br>${tag}</span>
-      </div>`;
-    }
+        <span style="font-size:11px;color:${col};text-align:right;white-space:nowrap">
+          ${fmtDate(row.due)}<br>${tag}${isDue ? ` <span style="font-size:10px">${arrow}</span>` : ' <span style="font-size:10px;color:var(--text3)">▼ หยุดก่อนกำหนด</span>'}
+        </span>
+      </div>
+      <div id="${formId}" style="display:none;background:var(--surface2);border-radius:var(--rs);padding:12px;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:500;color:var(--text2);margin-bottom:8px">
+          ${isDue ? `📝 บันทึกผล: <strong>${row.label}</strong>` : `⛔ หยุดทดสอบก่อนกำหนด: <strong>${row.label}</strong>`}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <div style="font-size:11px;color:var(--text2);margin-bottom:3px">วันที่ทดสอบ / วันที่หยุด</div>
+            <input class="fc" type="date" id="frd-${itemId}-${idx}" value="${today_str}" style="font-size:13px;padding:7px 10px">
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text2);margin-bottom:3px">${isDue ? 'ผลลัพธ์ (ไม่บังคับ)' : 'สาเหตุหยุดทดสอบ'}</div>
+            <input class="fc" type="text" id="frv-${itemId}-${idx}" placeholder="${isDue ? 'เช่น ΔE=1.2' : 'เช่น หยุดเพราะชิ้นงานเสียหาย'}" style="font-size:13px;padding:7px 10px">
+          </div>
+        </div>
+        ${checklist.length ? `<div style="margin-bottom:8px">
+          <div style="font-size:11px;color:var(--text2);margin-bottom:4px">Checklist</div>
+          <div style="background:var(--surface);border-radius:var(--rs);padding:6px 10px" id="fcl-${itemId}-${idx}">${ckHtml}</div>
+        </div>` : ''}
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-p" style="flex:1;padding:8px;font-size:13px" onclick="recordSingleFreq('${itemId}','${idx}',false)">
+            ${isDue ? '✅ บันทึกผล' : '✅ บันทึกและปิด freq นี้'}
+          </button>
+          ${!isDue ? `<button class="btn btn-warn" style="flex:1;padding:8px;font-size:13px" onclick="recordSingleFreq('${itemId}','${idx}',true)">⛔ หยุดทดสอบ</button>` : ''}
+        </div>
+      </div>
+    </div>`;
   }).join('');
 
   return `<div style="border:.5px solid var(--border);border-radius:var(--rs);padding:4px 12px;margin-top:6px;font-size:12px">${html}</div>`;
 }
 
-function toggleFreqForm(rowId, formId) {
+function toggleFreqForm(formId) {
   const form = document.getElementById(formId);
   if (!form) return;
   const isOpen = form.style.display !== 'none';
-  // ปิดทุก freq form ที่เปิดอยู่ก่อน
-  document.querySelectorAll('[id^="freq-form-"]').forEach(el => {
-    el.style.display = 'none';
-  });
+  document.querySelectorAll('[id^="freq-form-"]').forEach(el => { el.style.display = 'none'; });
   if (!isOpen) form.style.display = 'block';
 }
 
-async function recordSingleFreq(itemId, rowIdx) {
+async function recordSingleFreq(itemId, rowIdx, isStopped) {
   const rdEl = document.getElementById(`frd-${itemId}-${rowIdx}`);
   const rvEl = document.getElementById(`frv-${itemId}-${rowIdx}`);
-  if (!rdEl || !rdEl.value) { showToast('⚠️ กรุณาระบุวันที่ทดสอบ'); return; }
+  if (!rdEl || !rdEl.value) { showToast('⚠️ กรุณาระบุวันที่'); return; }
 
   const recordDate = new Date(rdEl.value);
   recordDate.setHours(0,0,0,0);
-  const rv   = rvEl ? rvEl.value.trim() : '';
+  const rv = rvEl ? rvEl.value.trim() : '';
+
+  // เก็บ checklist ที่ติ๊ก
+  const checkedItems = [];
+  const ckContainer  = document.getElementById(`fcl-${itemId}-${rowIdx}`);
+  if (ckContainer) {
+    ckContainer.querySelectorAll('input[type=checkbox]:checked').forEach(cb => {
+      checkedItems.push(parseInt(cb.value));
+    });
+  }
 
   const item = await dbGet('items', itemId);
   if (!item) return;
@@ -413,40 +436,61 @@ async function recordSingleFreq(itemId, rowIdx) {
 
   const start = getStartDate(item);
 
-  // หา spec ที่ due ≤ recordDate จาก freqs ที่เหลือ
-  const specsToPrune = (item.freqs || []).filter(spec => {
-    const due = skipToWorkday(getNextFromSpec(start, spec));
-    return due <= recordDate;
-  });
+  // ถ้าเป็นการหยุดก่อนกำหนด หรือบันทึกย้อนหลัง → บันทึก freq ปัจจุบันที่ใกล้ที่สุด
+  // ไม่ใช้ due ≤ recordDate เป็น filter อีกแล้ว — ใช้ index แทน
+  // หา spec จาก currentFreqs ตามลำดับ due (เหมือนที่แสดงใน rows)
+  const sortedFreqs = (item.freqs || [])
+    .map(spec => ({ spec, due: skipToWorkday(getNextFromSpec(start, spec)) }))
+    .sort((a,b) => a.due - b.due);
 
-  if (!specsToPrune.length) {
-    showToast('⚠️ วันที่ระบุยังไม่ถึงกำหนดของ freq นี้');
-    return;
-  }
+  // นับ history ที่ prune แล้ว เพื่อ offset rowIdx
+  const doneCount = (item.history || []).length;
+  // rowIdx ใน rows[] = doneCount + pendingIdx → pendingIdx = rowIdx - doneCount
+  const pendingIdx = rowIdx - doneCount;
+  const targetEntry = sortedFreqs[pendingIdx];
 
-  // บันทึก 1 history entry ต่อ spec
-  specsToPrune.forEach(spec => {
-    const due = skipToWorkday(getNextFromSpec(start, spec));
-    item.history.push({
-      date:      recordDate.toISOString(),
-      result:    rv,
-      specLabel: specLabel(spec),
-      specDue:   due.toISOString(),
-    });
+  if (!targetEntry) { showToast('⚠️ ไม่พบ freq ที่ต้องการบันทึก'); return; }
+
+  const { spec: targetSpec, due: targetDue } = targetEntry;
+
+  // บันทึก history entry สำหรับ freq นี้
+  item.history.push({
+    date:       recordDate.toISOString(),
+    result:     rv,
+    specLabel:  specLabel(targetSpec),
+    specDue:    targetDue.toISOString(),
+    stopped:    isStopped || false,
+    stopReason: isStopped ? rv : null,
+    checkDone:  checkedItems,
   });
 
   item.last       = recordDate.toISOString();
   item.lastResult = rv;
-  item.checkDone  = [];
-  prunePassedFreqsAt(item, recordDate);
+  item.checkDone  = checkedItems;
+
+  // ตัด freq ที่บันทึกแล้วออก (ตาม due ของ target spec)
+  item.freqs = (item.freqs || []).filter(spec => {
+    const due = skipToWorkday(getNextFromSpec(start, spec));
+    return isoDate(due) !== isoDate(targetDue);
+  });
+
+  // ถ้าหยุดทดสอบ → ตัด freq ทั้งหมดที่ due ≥ targetDue ออกด้วย
+  if (isStopped) {
+    item.freqs = (item.freqs || []).filter(spec => {
+      const due = skipToWorkday(getNextFromSpec(start, spec));
+      return due < targetDue;
+    });
+  }
 
   await saveItem(item);
   closeModal();
-  if (isProjectDone(item)) {
+
+  if (isStopped) {
+    showToast(`⛔ หยุดทดสอบ ${row?.label || ''} · ${fmtDate(recordDate)}`);
+  } else if (isProjectDone(item)) {
     showToast('🎉 โครงการเสร็จสิ้น 100%!');
   } else {
-    const remaining = item.freqs ? item.freqs.length : 0;
-    const nextDate  = getNext(item);
+    const nextDate = getNext(item);
     showToast(`✅ บันทึกแล้ว ${fmtDate(recordDate)}${nextDate ? ' · ถัดไป: '+fmtDate(nextDate) : ''}`);
   }
   fireNotifications(false);
