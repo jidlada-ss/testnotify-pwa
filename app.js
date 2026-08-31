@@ -1,5 +1,5 @@
 /* ============================================================
-   TestNotify PWA v3.0 — app.js
+   TestNotify PWA v3.1 — app.js
    v2.4: unified schedule list — no duplication, history+pending sorted by date
          history rows match actual freqs only, no ghost records
    ============================================================ */
@@ -732,23 +732,32 @@ function renderSchedule() {
     const ep  = getEndDateProgress(item);
     const done = s === 'done';
 
-    // Progress bar: % ของ freq แรกที่ยังไม่ผ่าน
-    let pct = 0;
+    // ── แถบบน: ความคืบหน้าของรอบทดสอบปัจจุบัน ──────────────
+    // คำนวณ: (วันที่ผ่านมาจาก startDate) ÷ (จำนวนวันทั้งหมดถึง due)
+    let cyclePct = 0, cycleCol = 'var(--ok)', cycleLabel = '', cycleSub = '';
     if (!done) {
       const entry = getNextEntry(item);
       if (entry) {
-        const daysTotal = entry.spec.type==='days' ? entry.spec.value : 30;
-        pct = Math.min(100, Math.max(0, Math.round((daysTotal - Math.max(0,d)) / daysTotal * 100)));
+        const start    = getStartDate(item);
+        const dueDate  = entry.date;
+        const totalDays = Math.max(1, diffDays(dueDate, start));
+        const elapsed   = diffDays(today(), start);
+        cyclePct  = Math.min(100, Math.max(0, Math.round(elapsed / totalDays * 100)));
+        cycleCol  = d < 0 ? 'var(--danger)' : d <= 7 ? 'var(--warn)' : 'var(--ok)';
+        cycleLabel = specLabel(entry.spec);
+        cycleSub   = d < 0 ? `เกิน ${Math.abs(d)} วัน` : `อีก ${d} วัน`;
       }
-    } else { pct = 100; }
-    const col = done ? 'var(--ok)' : d<0 ? 'var(--danger)' : d<=7 ? 'var(--warn)' : 'var(--ok)';
+    } else {
+      cyclePct = 100; cycleCol = 'var(--ok)';
+    }
+
     const hasAdj = item.planAdj && today() >= new Date(item.planAdj.fromDate);
     const adjBadge = hasAdj ? `<span class="badge bi" style="font-size:10px">แผนปรับ</span>` : '';
 
+    // ── แถบล่าง: ความคืบหน้าโครงการโดยรวม (มีเฉพาะเมื่อตั้ง endDate) ──
     let endBlock = '';
     if (ep) {
-      let remTxt;
-      let efCol;
+      let remTxt, efCol;
       if (ep.isDone) {
         remTxt = `<span style="color:var(--ok);font-weight:500">✅ โครงการเสร็จสิ้น</span>`;
         efCol  = 'var(--ok)';
@@ -762,8 +771,10 @@ function renderSchedule() {
         remTxt = `เหลือ ${ep.remaining} วัน`;
         efCol  = ep.pct > 90 ? 'var(--danger)' : ep.pct > 70 ? 'var(--warn)' : 'var(--ok)';
       }
-      endBlock = `<div class="enddate-wrap">
-        <div class="enddate-label"><span>ความคืบหน้า ${ep.pct}%</span><span>${remTxt}</span></div>
+      endBlock = `<div class="enddate-wrap" style="margin-top:4px">
+        <div class="enddate-label" style="font-size:10px;color:var(--text3)">
+          <span>📅 โครงการ ${ep.pct}%</span><span>${remTxt}</span>
+        </div>
         <div class="ep"><div class="ef" style="width:${ep.pct}%;background:${efCol}"></div></div>
       </div>`;
     }
@@ -776,8 +787,14 @@ function renderSchedule() {
       <div class="tsm mt4">${item.id ? item.id+' · ' : ''}${item.test}</div>
       ${item.desc ? `<div class="tsm mt4" style="color:var(--text3)">${item.desc}</div>` : ''}
       <div class="tsm mt4" style="color:var(--text3)">กำหนด: ${freqsLabel(item)}</div>
-      <div class="pb"><div class="pf" style="width:${pct}%;background:${col}"></div></div>
-      <div class="row rb tsm"><span>เริ่ม: ${startStr}</span><span>${done ? '✅ สิ้นสุดแล้ว' : 'ถัดไป: '+nextStr}</span></div>
+      ${!done ? `<div style="margin-top:6px">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-bottom:2px">
+          <span>🔄 รอบนี้ (${cycleLabel}) ${cyclePct}%</span>
+          <span>${cycleSub}</span>
+        </div>
+        <div class="pb" style="margin-top:0"><div class="pf" style="width:${cyclePct}%;background:${cycleCol}"></div></div>
+      </div>` : `<div class="pb mt4"><div class="pf" style="width:100%;background:var(--ok)"></div></div>`}
+      <div class="row rb tsm" style="margin-top:4px"><span>เริ่ม: ${startStr}</span><span>${done ? '✅ สิ้นสุดแล้ว' : 'ถัดไป: '+nextStr}</span></div>
       ${endBlock}
     </div>`;
   }).join('');
